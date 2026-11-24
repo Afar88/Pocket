@@ -101,15 +101,10 @@ async function main() {
     return result;
   };
 
-  const sessions = new Map<string, Awaited<ReturnType<typeof createPocketSession>>>();
-  const getSession = async (pocket: PocketRecord) => {
-    const key = pocket.sessionKeyId.toLowerCase();
-    const cached = sessions.get(key);
-    if (cached && cached.expiry > Math.floor(Date.now() / 1000)) return cached;
-    const session = await createPocketSession(config, publicClient, pocket);
-    sessions.set(key, session);
-    return session;
-  };
+  // Rebuild and re-check the Keystore on every use. A revoked key must
+  // be noticed on the next poll, not hidden behind a cached Session object.
+  const getSession = async (pocket: PocketRecord) =>
+    createPocketSession(config, publicClient, pocket);
 
   const textile = new TextileClient(altanaClient, getSession);
 

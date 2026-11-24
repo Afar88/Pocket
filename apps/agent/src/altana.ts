@@ -13,8 +13,7 @@ import {
   getAddress,
   keccak256,
   type Address,
-  type Hex,
-  type PublicClient
+  type Hex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { AgentConfig } from "./config.js";
@@ -30,7 +29,7 @@ export function createAltana(config: AgentConfig) {
 
 export async function createPocketSession(
   config: AgentConfig,
-  publicClient: PublicClient,
+  publicClient: unknown,
   pocket: PocketRecord
 ): Promise<AgentSession> {
   const signer = signerFromPrivateKey(config.privateKey);
@@ -44,7 +43,15 @@ export async function createPocketSession(
     throw new Error("Altana session expiry has passed.");
   }
 
-  const valid = await publicClient.readContract({
+  const keyStoreReader = publicClient as {
+    readContract: (request: {
+      address: Address;
+      abi: typeof ALTANA_KEYSTORE_ABI;
+      functionName: "isValidKey";
+      args: readonly [Address, Hex];
+    }) => Promise<boolean>;
+  };
+  const valid = await keyStoreReader.readContract({
     address: ALTANA_KEYSTORE,
     abi: ALTANA_KEYSTORE_ABI,
     functionName: "isValidKey",
