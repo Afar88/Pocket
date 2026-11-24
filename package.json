@@ -1,0 +1,25 @@
+{
+  "name": "pocket",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "workspaces": [
+    "packages/core",
+    "apps/agent",
+    "apps/web"
+  ],
+  "scripts": {
+    "build": "npm run build:core && npm run build:agent && npm run build:web",
+    "build:core": "npm run build --workspace @pocket/core",
+    "build:agent": "npm run build --workspace @pocket/agent",
+    "build:web": "npm run build --workspace @pocket/web",
+    "test": "npm run test:agent && npm run test:contracts",
+    "test:agent": "npm run test --workspace @pocket/agent",
+    "test:contracts": "forge test",
+    "start:agent": "npm run start --workspace @pocket/agent",
+    "start:web": "npm run start --workspace @pocket/web",
+    "register:agent": "npm run register --workspace @pocket/agent"
+  }
+}
