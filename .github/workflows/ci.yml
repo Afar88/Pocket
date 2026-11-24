@@ -1,8 +1,8 @@
 name: Pocket checks
 
 on:
+  # Run the complete suite on every branch push.
   push:
-    branches: [main, feat/mvp]
   pull_request:
     branches: [main]
 
@@ -20,18 +20,23 @@ jobs:
           node-version: 22
 
       - name: Install npm workspaces
+        id: install_deps
         run: npm install
 
-      - name: Build all TypeScript and Next.js apps
+      - name: Build TypeScript and Next.js apps
         run: npm run build
 
-      - name: Run mocked agent tests
+      - name: Run agent unit tests
+        if: ${{ always() && steps.install_deps.outcome == 'success' }}
         run: npm run test:agent
 
       - name: Install Foundry
+        id: foundry
+        if: ${{ always() }}
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
 
-      - name: Run PocketRegistry tests
+      - name: Run PocketRegistry Foundry tests
+        if: ${{ always() && steps.foundry.outcome == 'success' }}
         run: forge test

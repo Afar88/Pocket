@@ -86,6 +86,7 @@ describe("Pocket agent runner", () => {
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[1]?.[1]).toHaveLength(4);
     expect(d.verifyAttribution).toHaveBeenCalledTimes(1);
+    expect(d.verifyAttribution).toHaveBeenCalledWith(hash);
     expect(d.submitQuote).toHaveBeenCalledTimes(1);
     expect(d.logger.info).toHaveBeenCalled();
   });

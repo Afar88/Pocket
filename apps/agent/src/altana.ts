@@ -16,13 +16,15 @@ import {
   type Hex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { AgentConfig } from "./config.js";
+import { assertAttributionTag, type AgentConfig } from "./config.js";
 import type { PocketRecord, ExecuteResult } from "./types.js";
 
 export type AgentSession = Session;
 
 export function createAltana(config: AgentConfig) {
-  // Altana's appCode adds the app attribution code to every relayed wallet call.
+  // Pass through the exact ATTRIBUTION_TAG value used by the worker. Never
+  // construct an Altana client capable of sending untagged transactions.
+  assertAttributionTag(config.attributionTag);
   const client = createClient({ chains: [CELO], appCode: config.attributionTag });
   return { client };
 }

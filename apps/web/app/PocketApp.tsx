@@ -13,6 +13,7 @@ import {
   http,
   isAddress,
   parseUnits,
+  zeroHash,
   type Address,
   type Hex
 } from "viem";
@@ -428,7 +429,7 @@ export default function PocketApp() {
           data: encodeFunctionData({
             abi: POCKET_REGISTRY_ABI,
             functionName: "approveAgent",
-            args: [p.id, ZERO, "0x" + "0".repeat(64), 0n, 0n, 0n]
+            args: [p.id, ZERO, zeroHash, 0n, 0n, 0n]
           }),
           value: 0n
         }));

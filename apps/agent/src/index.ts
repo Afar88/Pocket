@@ -26,7 +26,7 @@ import { consoleLogger } from "./types.js";
 const POLL_MS = 120_000;
 
 async function main() {
-  const tag = (process.env.ATTRIBUTION_TAG ?? "").trim();
+  const tag = process.env.ATTRIBUTION_TAG ?? "";
   if (!tag) {
     consoleLogger.error("ATTRIBUTION_TAG is empty. Pocket will not submit any transaction.");
     setInterval(() => consoleLogger.error("Still blocked: set ATTRIBUTION_TAG before enabling payments."), POLL_MS);
@@ -143,10 +143,12 @@ async function main() {
         hash
       });
       const present = Boolean(result?.codes.includes(config.attributionTag));
-      consoleLogger.info("ERC-8021 verification: " + CELOSCAN_TX + hash, {
-        expected: config.attributionTag,
-        result,
-        present
+      consoleLogger.info("verifyTx: first live transaction attribution result", {
+        transaction: CELOSCAN_TX + hash,
+        expectedTag: config.attributionTag,
+        returnedCodes: result?.codes ?? [],
+        tagPresent: present,
+        result
       });
       return present;
     },

@@ -20,7 +20,9 @@ export function readAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConf
   return {
     privateKey: privateKey as Hex,
     rpcUrl: (env.CELO_RPC ?? "").trim() || CELO_RPC_DEFAULT,
-    attributionTag: (env.ATTRIBUTION_TAG ?? "").trim(),
+    // Preserve the exact value supplied by the deployment environment. Validation
+    // rejects whitespace or invalid characters instead of silently changing the code.
+    attributionTag: env.ATTRIBUTION_TAG ?? "",
     registryAddress: getAddress(rawRegistry)
   };
 }
