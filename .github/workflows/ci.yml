@@ -1,0 +1,37 @@
+name: Pocket checks
+
+on:
+  push:
+    branches: [main, feat/mvp]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install npm workspaces
+        run: npm install
+
+      - name: Build all TypeScript and Next.js apps
+        run: npm run build
+
+      - name: Run mocked agent tests
+        run: npm run test:agent
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run PocketRegistry tests
+        run: forge test
