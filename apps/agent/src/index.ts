@@ -4,7 +4,8 @@ import {
   http,
   parseUnits,
   type Address,
-  type Hex
+  type Hex,
+  type WalletClient
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { celo } from "viem/chains";
@@ -56,7 +57,7 @@ async function main() {
   }).extend(withAttribution(config.attributionTag));
 
   const { client: altanaClient } = createAltana(config);
-  const textile = new TextileClient(walletClient, account.address);
+  const textile = new TextileClient(walletClient as unknown as WalletClient, account.address);
 
   const tokenDecimals = await publicClient.readContract({
     address: CELO_USDT,
