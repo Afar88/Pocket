@@ -377,6 +377,19 @@ export default function PocketApp() {
         throw new Error("Altana did not fully confirm the session grant. The key is shown below; revoke it if any part was registered. " + failedLegs.join("; "));
       }
 
+      // The Textile reactor must be approved to call the wallet's ERC-1271
+      // isValidSignature for this session key during settlement verification.
+      const checkerApproval = await client.approveSignatureChecker({
+        wallet: activeWallet,
+        signer: activeWallet.signer,
+        session,
+        checker: TEXTILE_REACTOR,
+        chainId: CELO_CHAIN_ID
+      });
+      if (checkerApproval.status !== "CONFIRMED") {
+        throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
+      }
+
       const calls = pockets.filter((p) => !p.deleted).map((p) => ({
         to: registry,
         data: encodeFunctionData({
@@ -498,7 +511,7 @@ export default function PocketApp() {
             <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option>
           </select>
           <div className="notice">
-            Allowed calls are method-limited: Textile order execution, USDt approval, cNGN transfer, and PocketRegistry swap/payment records. Owner-only PocketRegistry actions are not allowed. The USDt cap includes Altana relay fees.
+            Allowed calls are method-limited: Textile order execution, USDt approval, cNGN transfer, and PocketRegistry swap/payment records. Pocket also asks Altana to let the Textile reactor verify this session's ERC-1271 signatures. Owner-only PocketRegistry actions are not allowed. The USDt cap includes Altana relay fees.
           </div>
           <p className="meta">FX: {TEXTILE_REACTOR}<br />USDt: {CELO_USDT}<br />cNGN: {CNGN}<br />Registry: {config?.registryAddress || "Not deployed"}</p>
           {sessionMeta ? (

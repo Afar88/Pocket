@@ -4,9 +4,9 @@ These are not claims that a production flow has been verified. Resolve them befo
 
 ## 1. Textile RFQ with Altana smart-wallet proof
 
-Textile v2 RFQ asks for a TakerControl EIP-712 proof, with the RFQ taker set to the Altana smart-wallet address. The worker signs that typed data through Altana's documented signOrderTypedData({session, typedData}) API. That API wraps the session-key signature in the ERC-1271 envelope checked by the Altana smart account; it does not send an EOA signature from the delegated key as though it were the wallet.
+Textile v2 RFQ asks for a TakerControl EIP-712 proof, with the RFQ taker set to the Altana smart-wallet address. The worker signs that typed data through Altana's documented signOrderTypedData({session, typedData}) API. That API wraps the session-key signature in the ERC-1271 envelope checked by the Altana smart account; it does not send an EOA signature from the delegated key as though it were the wallet. The web app also asks the owner to approve the Textile reactor as this session's ERC-1271 signature checker, using Altana's approveSignatureChecker API.
 
-**Required check:** make a small mainnet firm-quote request and confirm Textile accepts the Altana ERC-1271 signature for this taker. The quote request itself does not swap funds. No live request has been run by this PR.
+**Required check:** make a small mainnet firm-quote request and confirm Textile accepts the Altana ERC-1271 signature for this taker. Confirm that the documented Textile reactor is the contract which calls isValidSignature at settlement. The quote request itself does not swap funds. No live request has been run by this PR.
 
 ## 2. Attribution: viem extension and Altana session relay
 
