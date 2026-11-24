@@ -207,9 +207,9 @@ contract PocketRegistry {
     function markPaid(uint256 pocketId, bytes32 txRef) external onlyAgent(pocketId) {
         Pocket storage pocket = _pockets[pocketId];
         require(!pocket.paused, "pocket paused");
-        require(block.timestamp >= pocket.nextDue, "not due");
         require(txRef != bytes32(0), "empty tx ref");
         require(!usedTxRef[txRef], "tx ref used");
+        require(block.timestamp >= pocket.nextDue, "not due");
 
         usedTxRef[txRef] = true;
         pocket.nextDue += pocket.period;

@@ -57,8 +57,8 @@ function deps(overrides: Partial<RunnerDeps> = {}): RunnerDeps {
     getQuote: async () => quote(),
     allowance: async () => 0n,
     execute: async () => ({ status: "CONFIRMED", transactionHash: hash }),
-    verifyAttribution: async () => true,
-    submitQuote: async () => undefined,
+    verifyAttribution: vi.fn(async () => true),
+    submitQuote: vi.fn(async () => undefined),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     ...overrides
   };
