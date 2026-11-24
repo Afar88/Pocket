@@ -2,19 +2,19 @@
 
 These are not claims that a production flow has been verified. Resolve them before enabling an unattended mainnet worker.
 
-## 1. Textile TakerControl proof for an Altana wallet
+## 1. Textile RFQ with Altana smart-wallet proof
 
-Textile v2 keyless RFQ asks for a TakerControl EIP-712 proof, with the RFQ taker set to the Altana smart-wallet address. The current agent signs that proof with the session-key EOA from AGENT_PRIVATE_KEY. Textile's documented Celo quote schema and request route are implemented, but no real RFQ has confirmed that this delegated EOA proof is accepted for the Altana smart-wallet taker (including any ERC-1271/contract-wallet proof handling).
+Textile v2 RFQ asks for a TakerControl EIP-712 proof, with the RFQ taker set to the Altana smart-wallet address. The worker signs that typed data through Altana's documented signOrderTypedData({session, typedData}) API. That API wraps the session-key signature in the ERC-1271 envelope checked by the Altana smart account; it does not send an EOA signature from the delegated key as though it were the wallet.
 
-**Required check:** request a small firm quote on Celo mainnet and confirm Textile accepts the proof with the exact Altana wallet + session key. Do not swap funds to test this step.
+**Required check:** make a small mainnet firm-quote request and confirm Textile accepts the Altana ERC-1271 signature for this taker. The quote request itself does not swap funds. No live request has been run by this PR.
 
 ## 2. Attribution: viem extension and Altana session relay
 
-The agent creates one viem wallet client and applies withAttribution(ATTRIBUTION_TAG) from @celo/attribution-tags. Altana session transactions, however, must be submitted with client.execute({ session, calls }); sending those calls directly from the viem EOA would bypass the user's smart-wallet session and spend policy.
+The worker constructs exactly one viem wallet client and extends it with withAttribution(ATTRIBUTION_TAG). Altana session transactions must still be submitted with client.execute({session, calls, chainId: 42220}); sending those calls directly from the viem EOA would bypass the user's smart-wallet session and spend policy.
 
-Altana documents createClient({ chains: [CELO], appCode: ATTRIBUTION_TAG }) as the way to tag its own relayed execute transactions. The worker uses this documented hook for every Altana session execution, while the tagged viem wallet client signs Textile's EIP-712 proof. The standalone ERC-8004 script uses a tagged viem wallet client for its one registration transaction.
+Altana's documented createClient({chains: [CELO], appCode: ATTRIBUTION_TAG}) tags every Altana relay execution with the same app code. The viem client is not used to bypass that executor. The worker verifies the first confirmed transaction with verifyTx and logs whether the code is present.
 
-**Required check:** verify a real Altana session transaction with verifyTx and confirm the supplied tag appears. The literal requirement that every Altana-relayed transaction be sent through the same viem wallet client is not implementable without bypassing Altana's session-execution path; do not remove the session path to satisfy that wording.
+**Required check:** verify a real Altana session transaction and confirm verifyTx reports the supplied app code. The literal demand that each Altana-relayed transaction be sent via the viem EOA wallet client cannot be followed without abandoning Altana's session enforcement; this implementation preserves the session path and the Altana attribution hook.
 
 ## 3. Textile reactor selector
 
@@ -30,7 +30,7 @@ The registration script sends register(string) from AGENT_PRIVATE_KEY; therefore
 
 ## 5. Key ID and session reconstruction
 
-The worker derives the session key ID from the EOA's SEC1 public key and compares it with the ID stored in PocketRegistry before constructing the Altana session. This follows Altana's documented v0 key ID convention (keccak256(publicKey)). It also checks isValidKey(user, keyId) on the Celo Keystore.
+The worker derives the session key ID from the EOA's SEC1 public key and compares it with the ID stored in PocketRegistry before constructing the Altana session. This follows Altana's documented key ID convention (keccak256(publicKey)). It also checks isValidKey(user, keyId) on the Celo Keystore.
 
 **Required check:** confirm this reconstruction against the exact installed SDK version and the first granted key, then verify that revoke is observed before the next poll.
 
@@ -47,4 +47,4 @@ Pocket uses fixed-second periods: 1 day, 7 days, or 30 days. The contract advanc
 - No ERC-8004 registration has been submitted.
 - No PocketRegistry contract has been deployed.
 - No Celo mainnet transaction has been sent.
-- The UI, APIs, and SDK types have not been confirmed by a successful end-to-end build or wallet session.
+- CI has not yet completed a green build on the latest commit.

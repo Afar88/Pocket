@@ -1,7 +1,8 @@
 import {
   CELO,
   createClient,
-  signerFromPrivateKey
+  signerFromPrivateKey,
+  type Session
 } from "@altananetwork/sdk";
 import {
   ALTANA_KEYSTORE,
@@ -19,16 +20,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { AgentConfig } from "./config.js";
 import type { PocketRecord, ExecuteResult } from "./types.js";
 
-export type AgentSession = {
-  walletAddress: Address;
-  signer: ReturnType<typeof signerFromPrivateKey>;
-  publicKey: Hex;
-  permissions: ReturnType<typeof buildPocketSessionPolicy>;
-  expiry: number;
-};
+export type AgentSession = Session;
 
 export function createAltana(config: AgentConfig) {
-  // Altana's appCode is the documented attribution hook for relayed session calls.
+  // Altana's appCode adds the app attribution code to every relayed wallet call.
   const client = createClient({ chains: [CELO], appCode: config.attributionTag });
   return { client };
 }
@@ -77,7 +72,7 @@ export async function executeSessionCalls(
   session: AgentSession,
   calls: readonly { to: Address; data: Hex; value: bigint }[]
 ): Promise<ExecuteResult> {
-  const result = await client.execute({ session, calls: [...calls] });
+  const result = await client.execute({ session, calls: [...calls], chainId: 42220 });
   return {
     status: result.status,
     transactionHash: result.transactionHash

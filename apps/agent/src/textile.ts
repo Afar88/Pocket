@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import type { Address, Hex, WalletClient } from "viem";
+import type { Address, Hex } from "viem";
+import type { Client } from "@altananetwork/sdk";
 import { CELO_CHAIN_ID, CELO_USDT, CNGN, TEXTILE_REACTOR } from "@pocket/core";
+import type { AgentSession } from "./altana.js";
 import type { FirmQuote, PocketRecord, TxRequest } from "./types.js";
 
 const API = "https://api.textilecredit.com/v2";
@@ -37,27 +39,30 @@ const TAKER_TYPES = {
 
 export class TextileClient {
   constructor(
-    private readonly walletClient: WalletClient,
-    private readonly signerAddress: Address
+    private readonly altanaClient: Pick<Client, "signOrderTypedData">,
+    private readonly getSession: (pocket: PocketRecord) => Promise<AgentSession>
   ) {}
 
   async requestFirmQuote(pocket: PocketRecord): Promise<FirmQuote> {
     const nonce = ("0x" + randomBytes(32).toString("hex")) as Hex;
     const issuedAt = Date.now();
 
-    // The session key signs the proof. Textile documents EIP-712 TakerControl
-    // for keyless callers; acceptance of an Altana session key as an EIP-1271
-    // proof for the smart-account taker must be confirmed before live use.
-    const signature = await this.walletClient.signTypedData({
-      account: this.signerAddress,
-      domain: { name: "Textile Taker Control", version: "1", chainId: CELO_CHAIN_ID },
-      types: TAKER_TYPES,
-      primaryType: "TakerControl",
-      message: {
-        taker: pocket.agent,
-        chainId: BigInt(CELO_CHAIN_ID),
-        nonce,
-        issuedAt: BigInt(issuedAt)
+    // Textile checks the proof against the taker address (the Altana smart
+    // wallet), not the session-key EOA. Altana wraps the session signature in
+    // the ERC-1271 envelope its account verifies onchain.
+    const session = await this.getSession(pocket);
+    const signature = await this.altanaClient.signOrderTypedData({
+      session,
+      typedData: {
+        domain: { name: "Textile Taker Control", version: "1", chainId: CELO_CHAIN_ID },
+        types: TAKER_TYPES,
+        primaryType: "TakerControl",
+        message: {
+          taker: pocket.agent,
+          chainId: BigInt(CELO_CHAIN_ID),
+          nonce,
+          issuedAt: BigInt(issuedAt)
+        }
       }
     });
 

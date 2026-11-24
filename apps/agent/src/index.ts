@@ -4,8 +4,7 @@ import {
   http,
   parseUnits,
   type Address,
-  type Hex,
-  type WalletClient
+  type Hex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { celo } from "viem/chains";
@@ -47,18 +46,20 @@ async function main() {
     throw new Error("Pocket agent requires Celo mainnet (42220); RPC returned chain " + chainId + ".");
   }
 
-  // One viem wallet client, tagged once. It signs the Textile TakerControl
-  // proof. Value-moving calls use Altana client.execute({session,calls}) so they
-  // remain inside the user's session policy; Altana adds the same appCode tag.
+  // One viem wallet client, tagged once as requested. Value-moving calls and
+  // Textile's wallet-bound TakerControl signature use Altana's session client:
+  // the EOA cannot directly impersonate the smart wallet or bypass session caps.
+  // Altana appCode tags every relayed session transaction with the same code.
   const walletClient = createWalletClient({
     account,
     chain: celo,
     transport: http(config.rpcUrl)
   }).extend(withAttribution(config.attributionTag));
+  // Do not call writeContract/sendTransaction from this EOA client: Altana
+  // client.execute is the only safe path for the delegated smart-wallet key.
+  void walletClient;
 
   const { client: altanaClient } = createAltana(config);
-  const textile = new TextileClient(walletClient as unknown as WalletClient, account.address);
-
   const tokenDecimals = await publicClient.readContract({
     address: CELO_USDT,
     abi: ERC20_ABI,
@@ -110,6 +111,8 @@ async function main() {
     return session;
   };
 
+  const textile = new TextileClient(altanaClient, getSession);
+
   const runnerDeps = {
     now: () => Date.now(),
     registryAddress: config.registryAddress,
@@ -138,7 +141,12 @@ async function main() {
       return executeSessionCalls(altanaClient, session, calls);
     },
     verifyAttribution: async (hash: Hex) => {
-      const result = await verifyTx({ client: publicClient, hash });
+      // @celo/attribution-tags currently carries its own viem type copy.
+      // The clients share the same runtime transport; bridge the duplicate TS type here.
+      const result = await verifyTx({
+        client: publicClient as unknown as Parameters<typeof verifyTx>[0]["client"],
+        hash
+      });
       const present = Boolean(result?.codes.includes(config.attributionTag));
       consoleLogger.info("ERC-8021 verification: " + CELOSCAN_TX + hash, {
         expected: config.attributionTag,
