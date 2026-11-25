@@ -99,7 +99,9 @@ export const POCKET_REGISTRY_ABI = [
         { name: "sessionKeyId", type: "bytes32" },
         { name: "sessionExpiry", type: "uint64" },
         { name: "usdtDailyCap", type: "uint128" },
-        { name: "cngnDailyCap", type: "uint128" }
+        { name: "cngnDailyCap", type: "uint128" },
+        { name: "encryptedSessionKey", type: "bytes" },
+        { name: "serializedSession", type: "string" }
       ]
     }]
   },
@@ -157,7 +159,9 @@ export const POCKET_REGISTRY_ABI = [
       { name: "sessionKeyId", type: "bytes32" },
       { name: "sessionExpiry", type: "uint64" },
       { name: "usdtDailyCap", type: "uint128" },
-      { name: "cngnDailyCap", type: "uint128" }
+      { name: "cngnDailyCap", type: "uint128" },
+      { name: "encryptedSessionKey", type: "bytes" },
+      { name: "serializedSession", type: "string" }
     ],
     outputs: []
   },
@@ -191,5 +195,20 @@ export const POCKET_PAID_EVENT = {
     { name: "pocketId", type: "uint256", indexed: true },
     { name: "txRef", type: "bytes32", indexed: false },
     { name: "nextDue", type: "uint64", indexed: false }
+  ]
+} as const;
+
+export const POCKET_CREATED_EVENT = {
+  type: "event",
+  name: "PocketCreated",
+  anonymous: false,
+  inputs: [
+    { name: "pocketId", type: "uint256", indexed: true },
+    { name: "owner", type: "address", indexed: true },
+    { name: "recipient", type: "address", indexed: true },
+    { name: "amountUsdt", type: "uint256", indexed: false },
+    { name: "period", type: "uint64", indexed: false },
+    { name: "nextDue", type: "uint64", indexed: false },
+    { name: "label", type: "string", indexed: false }
   ]
 } as const;

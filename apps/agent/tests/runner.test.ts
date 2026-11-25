@@ -23,7 +23,9 @@ function pocket(): PocketRecord {
     sessionKeyId: ("0x" + "b".repeat(64)) as const,
     sessionExpiry: 2_000_000_000n,
     usdtDailyCap: 5_000_000n,
-    cngnDailyCap: 5_000_000_000n
+    cngnDailyCap: 5_000_000_000n,
+    encryptedSessionKey: ("0x" + "c".repeat(96)) as const,
+    serializedSession: "{}"
   };
 }
 
@@ -65,6 +67,38 @@ function deps(overrides: Partial<RunnerDeps> = {}): RunnerDeps {
 }
 
 describe("Pocket agent runner", () => {
+  it("pays a pocket whose owner has a valid session while another owner's revoked key only fails its own pocket", async () => {
+    const revoked = { ...pocket(), id: 1n, owner: "0x4444444444444444444444444444444444444444" as const };
+    const active = { ...pocket(), id: 2n, owner: "0x5555555555555555555555555555555555555555" as const };
+    const executedFor: bigint[] = [];
+    const execute = vi.fn(async (p: PocketRecord) => {
+      executedFor.push(p.id);
+      return { status: "CONFIRMED" as const, transactionHash: hash };
+    });
+    const d = deps({
+      listPockets: async () => [revoked, active],
+      isSessionValid: async (p) => p.id === 2n,
+      execute
+    });
+    await runDuePockets(d, "celo_pocket");
+    expect(executedFor).toEqual([2n, 2n]);
+    expect(d.logger.error).toHaveBeenCalled();
+  });
+
+  it("does not pay a pocket twice when a run repeats", async () => {
+    const state = { ...pocket(), period: 30_000_000_000n };
+    const execute = vi.fn(async (_p: PocketRecord, calls: readonly { to: string }[]) => {
+      // Emulate PocketRegistry.markPaid advancing nextDue once the atomic batch lands.
+      if (calls.length === 4) state.nextDue += state.period;
+      return { status: "CONFIRMED" as const, transactionHash: hash };
+    });
+    const d = deps({ listPockets: async () => [state], execute });
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).toHaveBeenCalledTimes(2);
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("does not execute anything when ATTRIBUTION_TAG is empty", async () => {
     const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
     const d = deps({ execute });

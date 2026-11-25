@@ -1,0 +1,41 @@
+name: Pocket agent
+
+on:
+  # Process due pockets every 15 minutes, plus on-demand runs.
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+# Never let two agent runs overlap; a queued run waits for the live one.
+concurrency:
+  group: pocket-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      AGENT_PRIVATE_KEY: ${{ secrets.AGENT_PRIVATE_KEY }}
+      AGENT_ENC_PRIVATE_KEY: ${{ secrets.AGENT_ENC_PRIVATE_KEY }}
+      ATTRIBUTION_TAG: ${{ vars.ATTRIBUTION_TAG }}
+      REGISTRY_ADDRESS: ${{ vars.REGISTRY_ADDRESS }}
+      POCKET_RUN_ONCE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install npm workspaces
+        run: npm install
+
+      - name: Build core and agent
+        run: npm run build:core && npm run build:agent
+
+      - name: Process due pockets once
+        run: node apps/agent/dist/index.js --once

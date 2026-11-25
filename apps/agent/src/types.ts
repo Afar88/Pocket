@@ -15,6 +15,8 @@ export type PocketRecord = {
   sessionExpiry: bigint;
   usdtDailyCap: bigint;
   cngnDailyCap: bigint;
+  encryptedSessionKey: Hex;
+  serializedSession: string;
 };
 
 export type TxRequest = {

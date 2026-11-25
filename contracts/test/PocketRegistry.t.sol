@@ -16,6 +16,8 @@ contract PocketRegistryTest {
     address private agent = address(0xB0B);
     address private recipient = address(0xCAFE);
     bytes32 private keyId = keccak256("session-key");
+    bytes private sealedKey = hex"deadbeef";
+    string private storedSession = "{\"publicKey\":\"0x1234\"}";
 
     function setUp() public {
         registry = new PocketRegistry();
@@ -64,7 +66,7 @@ contract PocketRegistryTest {
         registry.markPaid(id, keccak256("payment"));
 
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
 
         vm.prank(agent);
         registry.markPaid(id, keccak256("payment"));
@@ -76,7 +78,7 @@ contract PocketRegistryTest {
         vm.prank(owner);
         uint256 id = registry.createPocket(recipient, 1_000_000, 7 days, uint64(block.timestamp + 1 days), "Future");
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
 
         _expectError("not due");
         vm.prank(agent);
@@ -86,7 +88,7 @@ contract PocketRegistryTest {
     function testExpiredSessionCannotMarkPaid() public {
         uint256 id = _create();
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 2), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 2), 5_000_000, 5_000_000_000, sealedKey, storedSession);
 
         vm.warp(block.timestamp + 3);
         _expectError("session expired");
@@ -97,7 +99,7 @@ contract PocketRegistryTest {
     function testPauseBlocksAgentAndOwnerCanResume() public {
         uint256 id = _create();
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
         vm.prank(owner);
         registry.pausePocket(id, true);
 
@@ -114,9 +116,9 @@ contract PocketRegistryTest {
     function testOwnerCanRevokeAgent() public {
         uint256 id = _create();
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
         vm.prank(owner);
-        registry.approveAgent(id, address(0), bytes32(0), 0, 0, 0);
+        registry.approveAgent(id, address(0), bytes32(0), 0, 0, 0, "", "");
 
         _expectError("agent not approved");
         vm.prank(agent);
@@ -126,7 +128,7 @@ contract PocketRegistryTest {
     function testPaymentReferenceCannotBeReplayed() public {
         uint256 id = _create();
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
         bytes32 ref = keccak256("one-rfq");
         vm.prank(agent);
         registry.recordSwap(id, ref);
@@ -135,5 +137,34 @@ contract PocketRegistryTest {
         _expectError("tx ref used");
         vm.prank(agent);
         registry.markPaid(id, ref);
+    }
+    function testApproveAgentStoresSealedKeyAndSession() public {
+        uint256 id = _create();
+        vm.prank(owner);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
+        PocketRegistry.Pocket memory pocket = registry.getPocket(id);
+        require(keccak256(pocket.encryptedSessionKey) == keccak256(sealedKey), "sealed key stored");
+        require(keccak256(bytes(pocket.serializedSession)) == keccak256(bytes(storedSession)), "session stored");
+    }
+
+    function testApproveAgentRequiresSessionMaterial() public {
+        uint256 id = _create();
+        _expectError("missing session key");
+        vm.prank(owner);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, "", storedSession);
+        _expectError("missing session");
+        vm.prank(owner);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, "");
+    }
+
+    function testRevokeClearsSealedKeyAndSession() public {
+        uint256 id = _create();
+        vm.prank(owner);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000_000, sealedKey, storedSession);
+        vm.prank(owner);
+        registry.approveAgent(id, address(0), bytes32(0), 0, 0, 0, "", "");
+        PocketRegistry.Pocket memory pocket = registry.getPocket(id);
+        require(pocket.encryptedSessionKey.length == 0, "sealed key cleared");
+        require(bytes(pocket.serializedSession).length == 0, "session cleared");
     }
 }
