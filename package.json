@@ -21,7 +21,7 @@
     "start:agent": "npm run start --workspace @pocket/agent",
     "start:web": "npm run start --workspace @pocket/web",
     "register:agent": "npm run register --workspace @pocket/agent",
-    "build:deploy": "esbuild deploy/app.js --bundle --format=esm --outfile=deploy/bundle.js"
+    "build:deploy": "esbuild deploy/app.js --bundle --format=esm --outfile=deploy/bundle.js && esbuild deploy/keys.js --bundle --format=esm --outfile=deploy/keys-bundle.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

@@ -52,11 +52,11 @@ jobs:
             exit 1
           fi
 
-      - name: Verify committed deploy bundle matches the vendored build
+      - name: Verify committed deploy bundles match the vendored build
         if: ${{ always() && steps.install_deps.outcome == 'success' }}
         run: |
           npm run build:deploy
-          git diff --exit-code deploy/bundle.js || {
-            echo "deploy/bundle.js does not match the esbuild output of deploy/app.js."
+          git diff --exit-code deploy/bundle.js deploy/keys-bundle.js || {
+            echo "Committed deploy bundles do not match the esbuild output."
             exit 1
           }

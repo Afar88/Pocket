@@ -1,0 +1,47 @@
+name: Register ERC-8004 agent
+
+on:
+  # Manual run only: one tap from Actions on the phone.
+  workflow_dispatch:
+
+concurrency:
+  group: erc8004-register
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AGENT_PRIVATE_KEY: ${{ secrets.AGENT_PRIVATE_KEY }}
+      ATTRIBUTION_TAG: ${{ vars.ATTRIBUTION_TAG }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install npm workspaces
+        run: npm install
+
+      - name: Build core and agent
+        run: npm run build:core && npm run build:agent
+
+      # The script refuses when the wallet already owns an identity and fails
+      # clearly when it has no CELO for gas; it never prints keys.
+      - name: Register agent on Celo mainnet
+        shell: bash
+        run: node apps/agent/dist/register-erc8004.js | tee register.log
+
+      - name: Write run summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## ERC-8004 registration"
+            echo ""
+            grep '^SUMMARY_' register.log || echo "No registration was submitted (see the job log)."
+          } >> "$GITHUB_STEP_SUMMARY"
