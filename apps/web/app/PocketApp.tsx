@@ -179,7 +179,7 @@ export default function PocketApp() {
       }
     }
     return own;
-  }, [wallet, registryAddress, publicClient, config?.attributionTag]);
+  }, [wallet, registryAddress, publicClient]);
 
   const refresh = useCallback(async () => {
     if (!wallet || !registryAddress) return;
@@ -226,6 +226,8 @@ export default function PocketApp() {
         .reverse().slice(0, 20);
       const receiptRows = await Promise.all(rows.map(async (row): Promise<PaymentRow> => {
         let usdtPaid: string | undefined, cngnReceived: string | undefined, recipient: Address | undefined, attributionPresent: boolean | undefined;
+        let usdtOutgoing = 0n, usdtIncoming = 0n;
+        const cngnOutgoing = new Map<string, { address: Address; amount: bigint }>();
         try {
           const receipt = await publicClient.getTransactionReceipt({ hash: row.txHash });
           for (const log of receipt.logs) {
@@ -234,9 +236,22 @@ export default function PocketApp() {
             try {
               const transfer = decodeEventLog({ abi: TRANSFER_EVENT_ABI, data: log.data, topics: log.topics });
               const from = transfer.args.from.toLowerCase(), to = transfer.args.to.toLowerCase();
-              if (token === CELO_USDT.toLowerCase() && from === wallet.address.toLowerCase() && to === TEXTILE_REACTOR.toLowerCase() && transfer.args.value > 0n) usdtPaid = formatUnits(transfer.args.value, Number(tokenDecimals));
-              if (token === CNGN.toLowerCase() && from === wallet.address.toLowerCase() && to !== wallet.address.toLowerCase() && transfer.args.value > 0n) { cngnReceived = formatUnits(transfer.args.value, Number(cngnTokenDecimals)); recipient = transfer.args.to; }
+              if (token === CELO_USDT.toLowerCase() && transfer.args.value > 0n) {
+                if (from === wallet.address.toLowerCase() && to !== wallet.address.toLowerCase()) usdtOutgoing += transfer.args.value;
+                if (to === wallet.address.toLowerCase() && from !== wallet.address.toLowerCase()) usdtIncoming += transfer.args.value;
+              }
+              if (token === CNGN.toLowerCase() && from === wallet.address.toLowerCase() && to !== wallet.address.toLowerCase() && transfer.args.value > 0n) {
+                const previous = cngnOutgoing.get(to);
+                cngnOutgoing.set(to, { address: transfer.args.to, amount: (previous?.amount ?? 0n) + transfer.args.value });
+              }
             } catch { /* Ignore non-ERC20 receipt logs. */ }
+          }
+          const netUsdt = usdtOutgoing - usdtIncoming;
+          if (netUsdt > 0n) usdtPaid = formatUnits(netUsdt, Number(tokenDecimals));
+          if (cngnOutgoing.size > 0) {
+            const totalCngn = [...cngnOutgoing.values()].reduce((sum, transfer) => sum + transfer.amount, 0n);
+            cngnReceived = formatUnits(totalCngn, Number(cngnTokenDecimals));
+            if (cngnOutgoing.size === 1) recipient = [...cngnOutgoing.values()][0]?.address;
           }
         } catch { /* Keep the Celo receipt link if data is temporarily unavailable. */ }
         if (config?.attributionTag) {
@@ -251,7 +266,7 @@ export default function PocketApp() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [wallet, registryAddress, publicClient]);
+  }, [wallet, registryAddress, publicClient, config?.attributionTag]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -622,7 +637,7 @@ export default function PocketApp() {
 
         <section className="panel session-panel">
           <div className="section-heading"><div><h2>Session key</h2><p className="small">A limited key for the Pocket agent.</p></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
-          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Daily cNGN cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.cngnDailyCap), cngnDecimals)} cNGN</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>cNGN · transfer</span><code>{shortAddress(CNGN)}</code></div><div className="contract-item"><span>PocketRegistry · payment records</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
+          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Daily cNGN cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.cngnDailyCap), cngnDecimals)} cNGN</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>cNGN · transfer</span><code>{shortAddress(CNGN)}</code></div><div className="contract-item"><span>PocketRegistry · recordSwap / markPaid</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
             <div><label>USDt daily cap (max 5)</label><input value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)} inputMode="decimal" /></div>
             <div><label>cNGN daily cap</label><input value={cngnCap} onChange={(e) => setCngnCap(e.target.value)} inputMode="decimal" placeholder="Set limit" /></div>
           </div>
@@ -645,7 +660,7 @@ export default function PocketApp() {
         {wallet && pockets.length === 0 && <p>No pockets yet.</p>}
         {pockets.filter((p) => !p.deleted).map((p) => (
           <div className="pocket-card" key={p.id.toString()}>
-            <div className="pocket-top"><div className="pocket-title"><span className="eyebrow">POCKET <code>#{p.id.toString()}</code></span><h3>{p.label}</h3></div><span className={"status-pill " + (pocketStatus(p) === "Paused" ? "paused" : pocketStatus(p) === "Active" ? "active" : "expired")}>{pocketStatus(p)}</span></div>
+            <div className="pocket-top"><div className="pocket-title"><span className="eyebrow">POCKET <code>#{p.id.toString()}</code></span><h3>{p.label}</h3></div><span className={"status-pill " + (pocketStatus(p) === "Paused" ? "paused" : pocketStatus(p) === "Active" ? "active" : pocketStatus(p) === "Session expired" ? "expired" : "unassigned")}>{pocketStatus(p)}</span></div>
             <div className="pocket-amount"><span>Paid each cycle</span><strong className="mono">{formatUnits(p.amountUsdt, usdtDecimals)} USDT</strong></div>
             <div className="pocket-facts"><div><span>Recipient</span><code>{shortAddress(p.recipient)}</code></div><div><span>Frequency</span><strong>{periodText(p.period)}</strong></div><div><span>Next payout</span><strong>{dateText(p.nextDue)}</strong></div></div>
             {editingId === p.id.toString() ? (

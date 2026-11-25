@@ -32,7 +32,7 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
 .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .amount, .mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; } code { color: #ffc0c5; overflow-wrap: anywhere; }
 .pill, .status-pill, .count-pill, .progress-state, .sample-label { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 10px; color: var(--muted-strong); background: #10243d; font-size: 11px; font-weight: 800; white-space: nowrap; }
-.status-pill.active { border-color: #9f4350; color: #ffb8bf; background: #311e2a; } .status-pill.paused { border-color: #7a5260; color: #e0b9c1; background: #2c202d; } .status-pill.expired { border-color: #91404a; color: #ff9da6; background: #3b1c29; }
+.status-pill.active { border-color: #9f4350; color: #ffb8bf; background: #311e2a; } .status-pill.paused { border-color: #7a5260; color: #e0b9c1; background: #2c202d; } .status-pill.expired { border-color: #91404a; color: #ff9da6; background: #3b1c29; } .status-pill.unassigned { border-color: #455a75; color: #b4c2d5; background: #15263e; }
 .notice { border-left: 3px solid var(--red); background: #1e2337; padding: 12px 14px; border-radius: 9px; color: #e5c6cc; font-size: 12px; margin: 12px 0; }
 .error { color: #ff9da6; white-space: pre-wrap; } .success { color: #ffc0c5; } .small { font-size: 12px; color: var(--muted); }
 .section-heading, .progress-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; } .section-heading h2, .progress-heading h2 { margin-bottom: 4px; } .section-heading p { margin: 0; }
