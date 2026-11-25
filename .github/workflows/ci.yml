@@ -40,3 +40,23 @@ jobs:
       - name: Run PocketRegistry Foundry tests
         if: ${{ always() && steps.foundry.outcome == 'success' }}
         run: forge test
+
+      - name: Verify committed deploy bytecode matches the forge build
+        if: ${{ always() && steps.foundry.outcome == 'success' }}
+        run: |
+          forge build
+          built=$(jq -r .bytecode.object contracts/out/PocketRegistry.sol/PocketRegistry.json)
+          committed=$(cat deploy/registry.bytecode)
+          if [ "$built" != "$committed" ]; then
+            echo "deploy/registry.bytecode does not match the forge build output."
+            exit 1
+          fi
+
+      - name: Verify committed deploy bundle matches the vendored build
+        if: ${{ always() && steps.install_deps.outcome == 'success' }}
+        run: |
+          npm run build:deploy
+          git diff --exit-code deploy/bundle.js || {
+            echo "deploy/bundle.js does not match the esbuild output of deploy/app.js."
+            exit 1
+          }
