@@ -8,7 +8,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { celo } from "viem/chains";
 import { withAttribution, verifyTx } from "@celo/attribution-tags";
 import { CELO_RPC_DEFAULT, ERC8004_IDENTITY_REGISTRY } from "@pocket/core";
-import { readAgentConfig, assertAttributionTag } from "./config.js";
+import { readSignerConfig, assertAttributionTag } from "./config.js";
 
 const registerAbi = [{
   type: "function",
@@ -37,7 +37,7 @@ const registeredEventAbi = [{
 }] as const;
 
 async function registerIdentity() {
-  const config = readAgentConfig();
+  const config = readSignerConfig();
   assertAttributionTag(config.attributionTag);
   const account = privateKeyToAccount(config.privateKey);
   const publicClient = createPublicClient({
