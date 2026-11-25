@@ -9,6 +9,8 @@ const API = "https://api.textilecredit.com/v2";
 
 type ApiTransaction = { to: string; data: string; value: string; chainId: number };
 type RfqApiResponse = {
+  reason?: string;
+  error?: { code?: string; reason?: string };
   data?: {
     status?: string;
     reason?: string;
@@ -22,8 +24,9 @@ type RfqApiResponse = {
       expiresAt: string;
     };
     transactions?: {
-      approval: ApiTransaction;
-      swap: ApiTransaction;
+      // Only the swap payload is used. Pocket constructs its own exact approval.
+      approval?: ApiTransaction;
+      swap?: ApiTransaction;
     };
   };
 };
@@ -37,6 +40,12 @@ const TAKER_TYPES = {
   ]
 } as const;
 
+function describeUsdtAmount(amount: bigint): string {
+  const whole = amount / 1_000_000n;
+  const fraction = (amount % 1_000_000n).toString().padStart(6, "0");
+  return whole.toString() + "." + fraction + " USDT (" + amount.toString() + " base units)";
+}
+
 export class TextileClient {
   constructor(
     private readonly altanaClient: Pick<Client, "signOrderTypedData">,
@@ -44,64 +53,101 @@ export class TextileClient {
   ) {}
 
   async requestFirmQuote(pocket: PocketRecord): Promise<FirmQuote> {
-    const nonce = ("0x" + randomBytes(32).toString("hex")) as Hex;
-    const issuedAt = Date.now();
+    const amountTried = describeUsdtAmount(pocket.amountUsdt);
+    let retriedTakerControl = false;
 
-    // Textile checks the proof against the taker address (the Altana smart
-    // wallet), not the session-key EOA. Altana wraps the session signature in
-    // the ERC-1271 envelope its account verifies onchain.
-    const session = await this.getSession(pocket);
-    const signature = await this.altanaClient.signOrderTypedData({
-      session,
-      typedData: {
-        domain: { name: "Textile Taker Control", version: "1", chainId: CELO_CHAIN_ID },
-        types: TAKER_TYPES,
-        primaryType: "TakerControl",
-        message: {
-          taker: pocket.agent,
-          chainId: BigInt(CELO_CHAIN_ID),
-          nonce,
-          issuedAt: BigInt(issuedAt)
+    // Each pass creates a new nonce, timestamp and wallet-bound signature.
+    // Only the specific unverifiable-taker 502 response is retried, and once.
+    while (true) {
+      const nonce = ("0x" + randomBytes(32).toString("hex")) as Hex;
+      const issuedAt = Date.now();
+
+      // Textile verifies the smart-wallet taker, not the session-key EOA.
+      // Altana wraps the session signature in the account's ERC-1271 envelope.
+      const session = await this.getSession(pocket);
+      const signature = await this.altanaClient.signOrderTypedData({
+        session,
+        typedData: {
+          domain: { name: "Textile Taker Control", version: "1", chainId: CELO_CHAIN_ID },
+          types: TAKER_TYPES,
+          primaryType: "TakerControl",
+          message: {
+            taker: pocket.agent,
+            chainId: BigInt(CELO_CHAIN_ID),
+            nonce,
+            issuedAt: BigInt(issuedAt)
+          }
         }
+      });
+
+      const response = await fetch(API + "/rfq/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(75_000),
+        body: JSON.stringify({
+          chainId: CELO_CHAIN_ID,
+          sellToken: CELO_USDT,
+          buyToken: CNGN,
+          sellAmount: pocket.amountUsdt.toString(),
+          taker: pocket.agent,
+          takerProof: { nonce, issuedAt, signature }
+        })
+      });
+
+      let body: RfqApiResponse;
+      try {
+        body = await response.json() as RfqApiResponse;
+      } catch (error) {
+        throw new Error(
+          "Textile RFQ response could not be parsed (HTTP " + response.status + "; amount tried: " +
+          amountTried + "): " + (error instanceof Error ? error.message : String(error))
+        );
       }
-    });
 
-    const response = await fetch(API + "/rfq/request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(75_000),
-      body: JSON.stringify({
-        chainId: CELO_CHAIN_ID,
-        sellToken: CELO_USDT,
-        buyToken: CNGN,
-        sellAmount: pocket.amountUsdt.toString(),
-        taker: pocket.agent,
-        takerProof: { nonce, issuedAt, signature }
-      })
-    });
+      const data = body.data;
+      const reason = data?.reason ?? body.reason ?? body.error?.code ?? body.error?.reason ?? "unknown response";
 
-    const body = await response.json() as RfqApiResponse;
-    if (!response.ok) {
-      throw new Error("Textile RFQ failed (" + response.status + "): " + JSON.stringify(body));
+      if (response.status === 502 && reason === "taker_control_unverifiable") {
+        if (!retriedTakerControl) {
+          retriedTakerControl = true;
+          continue;
+        }
+        throw new Error(
+          "Textile returned HTTP 502 taker_control_unverifiable again after one fresh-quote retry; " +
+          "stopped this pocket. Amount tried: " + amountTried + "."
+        );
+      }
+
+      if (data?.status === "no_quote") {
+        throw new Error(
+          "Textile returned no_quote for amount tried: " + amountTried + ". Reason: " + reason + "."
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          "Textile RFQ failed (HTTP " + response.status + "; amount tried: " + amountTried + "): " +
+          JSON.stringify(body)
+        );
+      }
+      if (!data || data.status !== "quoted" || !data.quote || !data.transactions?.swap) {
+        throw new Error(
+          "Textile returned no firm quote for amount tried: " + amountTried + ". Reason: " + reason + "."
+        );
+      }
+
+      const q = data.quote;
+      return {
+        rfqId: data.rfqId ?? "",
+        claimToken: data.claimToken ?? "",
+        taker: q.taker as Address,
+        reactor: q.reactor as Address,
+        takerPays: BigInt(q.takerPays),
+        buyAmount: BigInt(q.buyAmount),
+        expiresAt: q.expiresAt,
+        swap: this.toTx(data.transactions.swap)
+      };
     }
-    const data = body.data;
-    if (!data || data.status !== "quoted" || !data.quote || !data.transactions) {
-      throw new Error("Textile returned no firm quote: " + (data?.reason ?? data?.status ?? "unknown response"));
-    }
-
-    const q = data.quote;
-    const tx = data.transactions;
-    return {
-      rfqId: data.rfqId ?? "",
-      claimToken: data.claimToken ?? "",
-      taker: q.taker as Address,
-      reactor: q.reactor as Address,
-      takerPays: BigInt(q.takerPays),
-      buyAmount: BigInt(q.buyAmount),
-      expiresAt: q.expiresAt,
-      approval: this.toTx(tx.approval),
-      swap: this.toTx(tx.swap)
-    };
   }
 
   async submit(quote: FirmQuote, txHash: Hex): Promise<void> {
@@ -122,7 +168,7 @@ export class TextileClient {
 
   private toTx(tx: ApiTransaction): TxRequest {
     if (!tx || !tx.to || !tx.data || tx.value === undefined || tx.chainId !== CELO_CHAIN_ID) {
-      throw new Error("Textile returned an incomplete or non-Celo transaction request.");
+      throw new Error("Textile returned an incomplete or non-Celo swap transaction request.");
     }
     return {
       to: tx.to as Address,

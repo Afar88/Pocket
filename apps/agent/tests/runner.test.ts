@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import { decodeFunctionData, keccak256, toHex, type Hex } from "viem";
 import type { RunnerDeps } from "../src/runner.js";
 import { runDuePockets } from "../src/runner.js";
 import type { FirmQuote, PocketRecord } from "../src/types.js";
-import { CELO_USDT, TEXTILE_REACTOR } from "@pocket/core";
+import { CELO_USDT, CNGN, ERC20_ABI, TEXTILE_REACTOR } from "@pocket/core";
 
 const address = "0x1111111111111111111111111111111111111111" as const;
 const registry = "0x3333333333333333333333333333333333333333" as const;
 const hash = ("0x" + "a".repeat(64)) as const;
+const executeSelector = keccak256(toHex("execute((bytes,bytes))")).slice(0, 10);
 
 function pocket(): PocketRecord {
   return {
@@ -32,7 +34,7 @@ function pocket(): PocketRecord {
 function quote(): FirmQuote {
   const tx = {
     to: TEXTILE_REACTOR,
-    data: "0x1234" as const,
+    data: (executeSelector + "00") as Hex,
     value: "0",
     chainId: 42220
   };
@@ -44,7 +46,6 @@ function quote(): FirmQuote {
     takerPays: 1_000_000n,
     buyAmount: 1_000_000_000n,
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    approval: { ...tx, to: CELO_USDT },
     swap: tx
   };
 }
@@ -81,28 +82,28 @@ describe("Pocket agent runner", () => {
       execute
     });
     await runDuePockets(d, "celo_pocket");
-    expect(executedFor).toEqual([2n, 2n]);
+    expect(executedFor).toEqual([2n]);
     expect(d.logger.error).toHaveBeenCalled();
   });
 
   it("does not pay a pocket twice when a run repeats", async () => {
     const state = { ...pocket(), period: 30_000_000_000n };
     const execute = vi.fn(async (_p: PocketRecord, calls: readonly { to: string }[]) => {
-      // Emulate PocketRegistry.markPaid advancing nextDue once the atomic batch lands.
-      if (calls.length === 4) state.nextDue += state.period;
+      // The one atomic Altana batch contains approval plus settlement when needed.
+      if (calls.length === 5) state.nextDue += state.period;
       return { status: "CONFIRMED" as const, transactionHash: hash };
     });
     const d = deps({ listPockets: async () => [state], execute });
     await runDuePockets(d, "celo_pocket");
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
     await runDuePockets(d, "celo_pocket");
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("does not execute anything when ATTRIBUTION_TAG is empty", async () => {
     const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
     const d = deps({ execute });
-    await runDuePockets(d, "");
+    await runDuePockets(d, "  ");
     expect(execute).not.toHaveBeenCalled();
     expect(d.logger.error).toHaveBeenCalled();
   });
@@ -113,28 +114,61 @@ describe("Pocket agent runner", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("executes approval and one atomic settlement batch through Altana", async () => {
+  it("puts an exact Textile-reactor approval in the same batch when allowance is too low", async () => {
     const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({ execute });
+    const d = deps({ execute, allowance: async () => 999_999n });
     await runDuePockets(d, "celo_pocket");
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute.mock.calls[1]?.[1]).toHaveLength(4);
-    expect(d.verifyAttribution).toHaveBeenCalledTimes(1);
-    expect(d.verifyAttribution).toHaveBeenCalledWith(hash);
-    expect(d.submitQuote).toHaveBeenCalledTimes(1);
-    expect(d.logger.info).toHaveBeenCalled();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const calls = execute.mock.calls[0]?.[1];
+    expect(calls).toHaveLength(5);
+    expect(calls?.[0]?.to).toBe(CELO_USDT);
+    const approval = decodeFunctionData({ abi: ERC20_ABI, data: calls![0]!.data });
+    expect(approval.functionName).toBe("approve");
+    expect(approval.args).toEqual([TEXTILE_REACTOR, 1_000_000n]);
+    expect(calls?.slice(1).map((item) => item.to)).toEqual([
+      TEXTILE_REACTOR,
+      CNGN,
+      registry,
+      registry
+    ]);
   });
 
-  it("does not send the swap after approval if the quote has expired", async () => {
-    let time = Date.now();
-    const execute = vi.fn(async () => {
-      time += 120_000;
-      return { status: "CONFIRMED" as const, transactionHash: hash };
-    });
-    const d = deps({ now: () => time, execute });
+  it("omits approval when the current allowance already covers the quote", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({ execute, allowance: async () => 1_000_000n });
     await runDuePockets(d, "celo_pocket");
+
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(d.submitQuote).not.toHaveBeenCalled();
+    const calls = execute.mock.calls[0]?.[1];
+    expect(calls).toHaveLength(4);
+    expect(calls?.some((item) => item.to.toLowerCase() === CELO_USDT.toLowerCase())).toBe(false);
+  });
+
+  it("refuses a swap selector outside the two supported Altana reactor entrypoints", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({
+      execute,
+      getQuote: async () => ({ ...quote(), swap: { ...quote().swap, data: "0xdeadbeef00" as Hex } })
+    });
+    await runDuePockets(d, "celo_pocket");
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(d.logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: expect.stringContaining("0xdeadbeef") })
+    );
+  });
+
+  it("refuses an expired quote before executing any part of settlement", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({
+      execute,
+      getQuote: async () => ({ ...quote(), expiresAt: new Date(Date.now() - 1_000).toISOString() })
+    });
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).not.toHaveBeenCalled();
+    expect(d.logger.error).toHaveBeenCalled();
   });
 
   it("does not execute when the cNGN output exceeds its cap", async () => {
