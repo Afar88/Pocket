@@ -29,6 +29,10 @@ async function main() {
   const tag = process.env.ATTRIBUTION_TAG ?? "";
   if (!tag) {
     consoleLogger.error("ATTRIBUTION_TAG is empty. Pocket will not submit any transaction.");
+    if (process.env.POCKET_RUN_ONCE === "1" || process.argv.includes("--once")) {
+      process.exitCode = 1;
+      return;
+    }
     setInterval(() => consoleLogger.error("Still blocked: set ATTRIBUTION_TAG before enabling payments."), POLL_MS);
     return;
   }
@@ -95,7 +99,9 @@ async function main() {
         sessionKeyId: p.sessionKeyId,
         sessionExpiry: p.sessionExpiry,
         usdtDailyCap: p.usdtDailyCap,
-        cngnDailyCap: p.cngnDailyCap
+        cngnDailyCap: p.cngnDailyCap,
+        encryptedSessionKey: p.encryptedSessionKey,
+        serializedSession: p.serializedSession
       });
     }
     return result;
@@ -166,15 +172,17 @@ async function main() {
     }
   };
 
+  const runOnce = process.env.POCKET_RUN_ONCE === "1" || process.argv.includes("--once");
   consoleLogger.info("Pocket agent started on Celo mainnet.", {
     chainId: 42220,
     registry: config.registryAddress,
-    pollMs: POLL_MS,
-    sessionSigner: account.address,
+    pollMs: runOnce ? 0 : POLL_MS,
+    runOnce,
+    workerIdentity: account.address,
     maxUsdtDailyCap: maxUsdtDailyCap.toString()
   });
   await run();
-  setInterval(() => void run(), POLL_MS);
+  if (!runOnce) setInterval(() => void run(), POLL_MS);
 }
 
 main().catch((error) => {

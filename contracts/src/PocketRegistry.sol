@@ -19,6 +19,8 @@ contract PocketRegistry {
         uint64 sessionExpiry;
         uint128 usdtDailyCap;
         uint128 cngnDailyCap;
+        bytes encryptedSessionKey;
+        string serializedSession;
     }
 
     uint256 public pocketCount;
@@ -97,7 +99,9 @@ contract PocketRegistry {
             sessionKeyId: bytes32(0),
             sessionExpiry: 0,
             usdtDailyCap: 0,
-            cngnDailyCap: 0
+            cngnDailyCap: 0,
+            encryptedSessionKey: "",
+            serializedSession: ""
         });
 
         emit PocketCreated(pocketId, msg.sender, recipient, amountUsdt, period, firstDue, label);
@@ -143,18 +147,26 @@ contract PocketRegistry {
         pocket.sessionExpiry = 0;
         pocket.usdtDailyCap = 0;
         pocket.cngnDailyCap = 0;
+        pocket.encryptedSessionKey = "";
+        pocket.serializedSession = "";
         emit PocketDeleted(pocketId);
     }
 
     /// @notice Approves the owner's Altana wallet as the agent caller for this pocket.
     /// @dev A zero agent clears the approval; no external wallet can mark this pocket paid.
+    ///      encryptedSessionKey is the session private key sealed to the agent's X25519
+    ///      public key; serializedSession is the Altana serializeSession JSON. Neither is
+    ///      secret to an attacker (the first needs the agent key, the second has no key
+    ///      material), but storing them here lets the agent serve many owners.
     function approveAgent(
         uint256 pocketId,
         address agent,
         bytes32 sessionKeyId,
         uint64 sessionExpiry,
         uint128 usdtDailyCap,
-        uint128 cngnDailyCap
+        uint128 cngnDailyCap,
+        bytes calldata encryptedSessionKey,
+        string calldata serializedSession
     ) external onlyOwner(pocketId) {
         Pocket storage pocket = _pockets[pocketId];
         require(!pocket.deleted, "pocket deleted");
@@ -164,7 +176,9 @@ contract PocketRegistry {
                 sessionKeyId == bytes32(0) &&
                 sessionExpiry == 0 &&
                 usdtDailyCap == 0 &&
-                cngnDailyCap == 0,
+                cngnDailyCap == 0 &&
+                encryptedSessionKey.length == 0 &&
+                bytes(serializedSession).length == 0,
                 "bad revoke"
             );
             pocket.agent = address(0);
@@ -172,15 +186,21 @@ contract PocketRegistry {
             pocket.sessionExpiry = 0;
             pocket.usdtDailyCap = 0;
             pocket.cngnDailyCap = 0;
+            pocket.encryptedSessionKey = "";
+            pocket.serializedSession = "";
         } else {
             require(sessionKeyId != bytes32(0), "zero key id");
             require(sessionExpiry > block.timestamp, "session expired");
             require(usdtDailyCap > 0 && cngnDailyCap > 0, "zero cap");
+            require(encryptedSessionKey.length > 0, "missing session key");
+            require(bytes(serializedSession).length > 0, "missing session");
             pocket.agent = agent;
             pocket.sessionKeyId = sessionKeyId;
             pocket.sessionExpiry = sessionExpiry;
             pocket.usdtDailyCap = usdtDailyCap;
             pocket.cngnDailyCap = cngnDailyCap;
+            pocket.encryptedSessionKey = encryptedSessionKey;
+            pocket.serializedSession = serializedSession;
         }
 
         emit AgentApproved(

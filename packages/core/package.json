@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "tweetnacl": "^1.0.3",
     "viem": "^2.37.0"
   }
 }

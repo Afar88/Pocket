@@ -8,6 +8,7 @@ export async function GET() {
     chainId: CELO_CHAIN_ID,
     rpcUrl: process.env.CELO_RPC || CELO_RPC_DEFAULT,
     registryAddress: process.env.REGISTRY_ADDRESS || "",
-    attributionTag: process.env.ATTRIBUTION_TAG || ""
+    attributionTag: process.env.ATTRIBUTION_TAG || "",
+    agentEncPublicKey: process.env.AGENT_ENC_PUBLIC_KEY || ""
   });
 }

@@ -99,7 +99,9 @@ export const POCKET_REGISTRY_ABI = [
         { name: "sessionKeyId", type: "bytes32" },
         { name: "sessionExpiry", type: "uint64" },
         { name: "usdtDailyCap", type: "uint128" },
-        { name: "cngnDailyCap", type: "uint128" }
+        { name: "cngnDailyCap", type: "uint128" },
+        { name: "encryptedSessionKey", type: "bytes" },
+        { name: "serializedSession", type: "string" }
       ]
     }]
   },
@@ -157,7 +159,9 @@ export const POCKET_REGISTRY_ABI = [
       { name: "sessionKeyId", type: "bytes32" },
       { name: "sessionExpiry", type: "uint64" },
       { name: "usdtDailyCap", type: "uint128" },
-      { name: "cngnDailyCap", type: "uint128" }
+      { name: "cngnDailyCap", type: "uint128" },
+      { name: "encryptedSessionKey", type: "bytes" },
+      { name: "serializedSession", type: "string" }
     ],
     outputs: []
   },
