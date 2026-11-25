@@ -51,3 +51,12 @@ jobs:
             echo "deploy/registry.bytecode does not match the forge build output."
             exit 1
           fi
+
+      - name: Verify committed deploy bundle matches the vendored build
+        if: ${{ always() && steps.install_deps.outcome == 'success' }}
+        run: |
+          npm run build:deploy
+          git diff --exit-code deploy/bundle.js || {
+            echo "deploy/bundle.js does not match the esbuild output of deploy/app.js."
+            exit 1
+          }
