@@ -132,3 +132,11 @@ The current script registers the `AGENT_PRIVATE_KEY` EOA as the ERC-8004 identit
 - Pausing or deleting a pocket does not replace revoking a compromised session key.
 - Revoke an affected session immediately if its session key is compromised.
 - All registry deployment, wallet funding, session approval, registration, and payment transactions are explicit operator or user actions. CI and hosting setup do not submit them.
+
+## 9. Phone-only setup (no laptop needed)
+
+Everything below runs from a phone browser and the repo's Actions tab.
+
+1. **Deploy the registry**: open the GitHub Pages deploy page (`https://<owner>.github.io/<repo>/`) in the MetaMask mobile browser, connect, switch to Celo mainnet, and tap Deploy. Copy the contract address into the repo variable `REGISTRY_ADDRESS`.
+2. **Make the encryption key pair**: open the `keys.html` page linked from the deploy page, tap "Make key pair", and copy the private key straight into the GitHub secret `AGENT_ENC_PRIVATE_KEY`. Put the public key in the web service environment as `AGENT_ENC_PUBLIC_KEY`. The page makes no network calls; the pair is identical to `npm run keygen`.
+3. **Fund and register the agent**: send a small amount of CELO to the agent wallet, then run Actions → "Register ERC-8004 agent". The run fails clearly if the wallet has no CELO or is already registered, and its summary shows the agent ID, transaction hash, and `verifyTx` result.

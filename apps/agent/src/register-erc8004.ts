@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  decodeEventLog,
   http
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -17,6 +18,24 @@ const registerAbi = [{
   outputs: [{ name: "agentId", type: "uint256" }]
 }] as const;
 
+const balanceOfAbi = [{
+  type: "function",
+  name: "balanceOf",
+  stateMutability: "view",
+  inputs: [{ name: "owner", type: "address" }],
+  outputs: [{ name: "", type: "uint256" }]
+}] as const;
+
+const registeredEventAbi = [{
+  type: "event",
+  name: "Registered",
+  inputs: [
+    { name: "agentId", type: "uint256", indexed: true },
+    { name: "agentURI", type: "string", indexed: false },
+    { name: "owner", type: "address", indexed: true }
+  ]
+}] as const;
+
 async function registerIdentity() {
   const config = readAgentConfig();
   assertAttributionTag(config.attributionTag);
@@ -28,6 +47,21 @@ async function registerIdentity() {
   const chainId = await publicClient.getChainId();
   if (chainId !== 42220) {
     throw new Error("ERC-8004 registration requires Celo mainnet (42220).");
+  }
+
+  const alreadyRegistered = await publicClient.readContract({
+    address: ERC8004_IDENTITY_REGISTRY,
+    abi: balanceOfAbi,
+    functionName: "balanceOf",
+    args: [account.address]
+  });
+  if (alreadyRegistered > 0n) {
+    throw new Error("Agent wallet " + account.address + " is already registered (owns " + alreadyRegistered + " identit" + (alreadyRegistered === 1n ? "y" : "ies") + "). Refusing to register twice.");
+  }
+
+  const gasBalance = await publicClient.getBalance({ address: account.address });
+  if (gasBalance === 0n) {
+    throw new Error("Agent wallet " + account.address + " has no CELO for gas. Send a small amount of CELO to it, then run the workflow again.");
   }
 
   const walletClient = createWalletClient({
@@ -52,11 +86,31 @@ async function registerIdentity() {
     args: [agentURI]
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  const attribution = await verifyTx({ client: publicClient, hash });
-  console.info("ERC-8004 registration transaction:", "https://celoscan.io/tx/" + hash);
+  if (receipt.status !== "success") {
+    throw new Error("Registration transaction failed: https://celoscan.io/tx/" + hash);
+  }
+  const registeredLog = receipt.logs
+    .filter((log) => log.address.toLowerCase() === ERC8004_IDENTITY_REGISTRY.toLowerCase())
+    .map((log) => {
+      try {
+        return decodeEventLog({ abi: registeredEventAbi, data: log.data, topics: log.topics });
+      } catch {
+        return null;
+      }
+    })
+    .find((event) => event !== null);
+  const confirmedHash = receipt.transactionHash;
+  const attribution = await verifyTx({ client: publicClient, hash: confirmedHash });
+  const tagPresent = Boolean(attribution?.codes.includes(config.attributionTag));
+  console.info("ERC-8004 registration transaction:", "https://celoscan.io/tx/" + confirmedHash);
   console.info("Receipt status:", receipt.status);
-  console.info("Attribution tag present:", Boolean(attribution?.codes.includes(config.attributionTag)), attribution);
-  console.info("Read Registered(agentId) from the receipt to save the identity number.");
+  console.info("Attribution tag present:", tagPresent, attribution);
+
+  // Machine-readable summary lines the workflow lifts into the run summary.
+  // Never print keys here.
+  console.info("SUMMARY_AGENT_ID=" + (registeredLog ? registeredLog.args.agentId.toString() : "unknown"));
+  console.info("SUMMARY_TX_HASH=" + confirmedHash);
+  console.info("SUMMARY_ATTRIBUTION=" + (tagPresent ? "tag present: " + config.attributionTag : "tag NOT found"));
 }
 
 registerIdentity().catch((error) => {
