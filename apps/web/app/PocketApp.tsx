@@ -239,10 +239,17 @@ export default function PocketApp() {
         : await client.createPasskeyWallet({ name: "Pocket", rpId });
       setSdk(client);
       setWallet(result);
-      const saved = window.localStorage.getItem(sessionStorageKey(result.address));
+      const key = sessionStorageKey(result.address);
+      // Migrate a session saved before per-wallet keys so it stays revocable.
+      const legacy = window.localStorage.getItem("pocket-session");
+      if (legacy && !window.localStorage.getItem(key)) {
+        window.localStorage.setItem(key, legacy);
+      }
+      window.localStorage.removeItem("pocket-session");
+      const saved = window.localStorage.getItem(key);
       if (saved) {
         try { setSessionMeta(JSON.parse(saved) as SessionMeta); }
-        catch { window.localStorage.removeItem(sessionStorageKey(result.address)); setSessionMeta(null); }
+        catch { window.localStorage.removeItem(key); setSessionMeta(null); }
       } else {
         setSessionMeta(null);
       }
