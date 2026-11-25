@@ -240,13 +240,15 @@ export default function PocketApp() {
       setSdk(client);
       setWallet(result);
       const key = sessionStorageKey(result.address);
-      // Migrate a session saved before per-wallet keys so it stays revocable.
+      // Keep legacy records under a shared key so the wallet that owns the
+      // grant can still revoke it, whichever wallet connects first.
       const legacy = window.localStorage.getItem("pocket-session");
-      if (legacy && !window.localStorage.getItem(key)) {
-        window.localStorage.setItem(key, legacy);
+      if (legacy) {
+        window.localStorage.setItem("pocket-session-legacy", legacy);
+        window.localStorage.removeItem("pocket-session");
       }
-      window.localStorage.removeItem("pocket-session");
-      const saved = window.localStorage.getItem(key);
+      const saved = window.localStorage.getItem(key)
+        ?? window.localStorage.getItem("pocket-session-legacy");
       if (saved) {
         try { setSessionMeta(JSON.parse(saved) as SessionMeta); }
         catch { window.localStorage.removeItem(key); setSessionMeta(null); }
@@ -295,7 +297,11 @@ export default function PocketApp() {
       }
       if (createdId === null) throw new Error("Pocket created, but its PocketCreated event was not found in the receipt.");
 
-      if (sessionMeta && sessionMeta.expiry > Math.floor(Date.now() / 1000)) {
+      // Legacy saved sessions predate sealed-key storage and cannot be
+      // attached to a new pocket; only sessions carrying the encrypted
+      // key and serialized session are.
+      if (sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession
+        && sessionMeta.expiry > Math.floor(Date.now() / 1000)) {
         await sendOwnerCalls([{
           to: registry,
           data: encodeFunctionData({
