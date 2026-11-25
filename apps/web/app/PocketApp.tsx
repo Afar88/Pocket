@@ -650,8 +650,7 @@ export default function PocketApp() {
           </div>
           <p className="meta">FX: {TEXTILE_REACTOR}<br />USDt: {CELO_USDT}<br />cNGN: {CNGN}<br />Registry: {config?.registryAddress || "Not deployed"}</p>
               <button disabled={busy || !wallet || !readyForWrites || pockets.length === 0} onClick={() => void grantSession()}>Grant session key</button>
-            </>
-          )}
+            </>}
         </section>
       </div>
 
