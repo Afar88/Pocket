@@ -2,7 +2,7 @@ services:
   - type: web
     name: pocket-web
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build:core && npm run build:web
     startCommand: npm run start:web
     healthCheckPath: /
@@ -13,19 +13,5 @@ services:
         sync: false
       - key: REGISTRY_ADDRESS
         sync: false
-
-  - type: worker
-    name: pocket-agent
-    runtime: node
-    plan: starter
-    buildCommand: npm install && npm run build:core && npm run build:agent
-    startCommand: npm run start:agent
-    envVars:
-      - key: AGENT_PRIVATE_KEY
-        sync: false
-      - key: CELO_RPC
-        value: https://celo-rpc.publicnode.com
-      - key: ATTRIBUTION_TAG
-        sync: false
-      - key: REGISTRY_ADDRESS
+      - key: AGENT_ENC_PUBLIC_KEY
         sync: false
