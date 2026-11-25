@@ -50,6 +50,11 @@ export async function createPocketSession(
   // deserializeSession refuses a signer that does not match the stored key.
   const session = deserializeSession(stored, signer);
 
+  if (session.walletAddress.toLowerCase() !== pocket.agent.toLowerCase()) {
+    // A pocket owner cannot point the worker at another wallet's sealed grant:
+    // the Keystore checks the key, not which pocket may spend it.
+    throw new Error("Stored session belongs to a different wallet than this pocket's approved agent.");
+  }
   const derivedKeyId = keccak256(session.publicKey);
   if (derivedKeyId.toLowerCase() !== pocket.sessionKeyId.toLowerCase()) {
     throw new Error("Stored session key does not match the session key approved for this pocket.");

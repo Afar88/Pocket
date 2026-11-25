@@ -197,3 +197,18 @@ export const POCKET_PAID_EVENT = {
     { name: "nextDue", type: "uint64", indexed: false }
   ]
 } as const;
+
+export const POCKET_CREATED_EVENT = {
+  type: "event",
+  name: "PocketCreated",
+  anonymous: false,
+  inputs: [
+    { name: "pocketId", type: "uint256", indexed: true },
+    { name: "owner", type: "address", indexed: true },
+    { name: "recipient", type: "address", indexed: true },
+    { name: "amountUsdt", type: "uint256", indexed: false },
+    { name: "period", type: "uint64", indexed: false },
+    { name: "nextDue", type: "uint64", indexed: false },
+    { name: "label", type: "string", indexed: false }
+  ]
+} as const;

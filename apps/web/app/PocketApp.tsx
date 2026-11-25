@@ -9,6 +9,7 @@ import {
 } from "@altananetwork/sdk";
 import {
   createPublicClient,
+  decodeEventLog,
   encodeFunctionData,
   formatUnits,
   http,
@@ -28,6 +29,7 @@ import {
   CELO_USDT,
   CNGN,
   ERC20_ABI,
+  POCKET_CREATED_EVENT,
   POCKET_PAID_EVENT,
   POCKET_REGISTRY_ABI,
   sealToAgent,
@@ -69,6 +71,9 @@ type SessionMeta = {
 type PaymentRow = { pocketId: string; txHash: Hex; blockNumber: bigint };
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
+const POCKET_EVENTS_ABI = [POCKET_CREATED_EVENT] as const;
+const sessionStorageKey = (walletAddress: string) =>
+  "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
   { label: "Every day", value: "86400" },
   { label: "Every week", value: "604800" },
@@ -123,10 +128,6 @@ export default function PocketApp() {
       .then((response) => response.json())
       .then((data: AppConfig) => setConfig(data))
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-    const saved = window.localStorage.getItem("pocket-session");
-    if (saved) {
-      try { setSessionMeta(JSON.parse(saved) as SessionMeta); } catch { window.localStorage.removeItem("pocket-session"); }
-    }
   }, []);
 
   const requireWriteSetup = useCallback(() => {
@@ -150,6 +151,25 @@ export default function PocketApp() {
     setMessage("Confirmed: " + CELOSCAN_TX + result.transactionHash);
     return result.transactionHash as Hex;
   }, [requireWriteSetup]);
+
+  // Full scan of every pocket owned by this wallet, not just the last-100
+  // display window: granting or revoking a session must reach older pockets too.
+  const listOwnPockets = useCallback(async (): Promise<PocketView[]> => {
+    if (!wallet || !registryAddress) return [];
+    const count = await publicClient.readContract({
+      address: registryAddress, abi: POCKET_REGISTRY_ABI, functionName: "pocketCount"
+    });
+    const own: PocketView[] = [];
+    for (let id = 1n; id <= count; id += 1n) {
+      const record = await publicClient.readContract({
+        address: registryAddress, abi: POCKET_REGISTRY_ABI, functionName: "getPocket", args: [id]
+      });
+      if (record.owner.toLowerCase() === wallet.address.toLowerCase()) {
+        own.push({ id, ...record } as PocketView);
+      }
+    }
+    return own;
+  }, [wallet, registryAddress, publicClient]);
 
   const refresh = useCallback(async () => {
     if (!wallet || !registryAddress) return;
@@ -219,6 +239,13 @@ export default function PocketApp() {
         : await client.createPasskeyWallet({ name: "Pocket", rpId });
       setSdk(client);
       setWallet(result);
+      const saved = window.localStorage.getItem(sessionStorageKey(result.address));
+      if (saved) {
+        try { setSessionMeta(JSON.parse(saved) as SessionMeta); }
+        catch { window.localStorage.removeItem(sessionStorageKey(result.address)); setSessionMeta(null); }
+      } else {
+        setSessionMeta(null);
+      }
       setMessage("Passkey wallet ready: " + result.address);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -237,10 +264,7 @@ export default function PocketApp() {
       const due = BigInt(Math.floor(new Date(firstDue).getTime() / 1000));
       if (amountRaw <= 0n || due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Amount and due date must be in the future.");
       if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each default pocket at or below 5 USDt.");
-      const expectedId = (await publicClient.readContract({
-        address: registry, abi: POCKET_REGISTRY_ABI, functionName: "pocketCount"
-      })) + 1n;
-      await sendOwnerCalls([{
+      const createHash = await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -250,6 +274,20 @@ export default function PocketApp() {
         value: 0n
       }]);
 
+      // pocketCount+1 is racy across owners; read the real id from the
+      // PocketCreated event in the confirmed transaction's logs.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
+      let createdId: bigint | null = null;
+      for (const log of receipt.logs) {
+        try {
+          const event = decodeEventLog({ abi: POCKET_EVENTS_ABI, data: log.data, topics: log.topics });
+          if (event.eventName === "PocketCreated" && event.args.owner.toLowerCase() === wallet.address.toLowerCase()) {
+            createdId = event.args.pocketId;
+          }
+        } catch { /* not a PocketCreated log */ }
+      }
+      if (createdId === null) throw new Error("Pocket created, but its PocketCreated event was not found in the receipt.");
+
       if (sessionMeta && sessionMeta.expiry > Math.floor(Date.now() / 1000)) {
         await sendOwnerCalls([{
           to: registry,
@@ -257,7 +295,7 @@ export default function PocketApp() {
             abi: POCKET_REGISTRY_ABI,
             functionName: "approveAgent",
             args: [
-              expectedId,
+              createdId,
               wallet.address as Address,
               sessionMeta.keyId,
               BigInt(sessionMeta.expiry),
@@ -343,7 +381,8 @@ export default function PocketApp() {
     setBusy(true); setError("");
     try {
       const { client, activeWallet, registry } = requireWriteSetup();
-      if (!pockets.some((p) => !p.deleted)) throw new Error("Create at least one pocket before granting the agent.");
+      const ownPockets = await listOwnPockets();
+      if (!ownPockets.some((p) => !p.deleted)) throw new Error("Create at least one pocket before granting the agent.");
       const secret = generatePrivateKey();
       const sessionSigner = signerFromPrivateKey(secret);
       const expiry = Math.floor(Date.now() / 1000) + Number(expiryDays) * 86_400;
@@ -380,7 +419,7 @@ export default function PocketApp() {
         encryptedSessionKey,
         serializedSession
       };
-      window.localStorage.setItem("pocket-session", JSON.stringify(meta));
+      window.localStorage.setItem(sessionStorageKey(activeWallet.address), JSON.stringify(meta));
       setSessionMeta(meta);
 
       if (session.status !== "granted") {
@@ -405,7 +444,7 @@ export default function PocketApp() {
         throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
       }
 
-      const calls = pockets.filter((p) => !p.deleted).map((p) => ({
+      const calls = ownPockets.filter((p) => !p.deleted).map((p) => ({
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -436,7 +475,8 @@ export default function PocketApp() {
       if (revoked.status !== "revoked") {
         throw new Error("Altana did not confirm revocation. Check the returned session status before continuing.");
       }
-      const calls = pockets
+      const ownPockets = await listOwnPockets();
+      const calls = ownPockets
         .filter((p) => !p.deleted && p.sessionKeyId.toLowerCase() === sessionMeta.keyId.toLowerCase())
         .map((p) => ({
           to: registry,
@@ -448,7 +488,7 @@ export default function PocketApp() {
           value: 0n
         }));
       if (calls.length) await sendOwnerCalls(calls);
-      window.localStorage.removeItem("pocket-session");
+      window.localStorage.removeItem(sessionStorageKey(activeWallet.address));
       setSessionMeta(null);
       setMessage("Session revoked. The agent can no longer use this key.");
       await refresh();
