@@ -85,7 +85,11 @@ describe("Textile RFQ client", () => {
   });
 
   it("retries taker_control_unverifiable once with a fresh quote proof, then stops clearly", async () => {
-    const fetchMock = vi.fn()
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+        data: { status: "error", reason: "unreachable" }
+      }, 502)
+    )
       .mockResolvedValueOnce(jsonResponse({
         data: { status: "error", reason: "taker_control_unverifiable" }
       }, 502))
