@@ -105,7 +105,7 @@ export class TextileClient {
       }
 
       const data = body.data;
-      const reason = data?.reason ?? body.reason ?? body.error?.code ?? body.error?.reason ?? "unknown response";
+      const reason = data?.reason ?? body.reason ?? body.error?.code ?? body.error?.reason ?? data?.status ?? "unknown response";
 
       if (response.status === 502 && reason === "taker_control_unverifiable") {
         if (!retriedTakerControl) {

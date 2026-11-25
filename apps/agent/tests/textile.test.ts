@@ -61,7 +61,7 @@ afterEach(() => {
 
 describe("Textile RFQ client", () => {
   it("ignores Textile's approval transaction and keeps only the Celo swap payload", async () => {
-    const fetchMock = vi.fn(async () => quotedResponse());
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => quotedResponse());
     vi.stubGlobal("fetch", fetchMock);
     const { client } = createClient();
 
@@ -72,7 +72,7 @@ describe("Textile RFQ client", () => {
   });
 
   it("logs an actionable no_quote error including the amount tried", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
       data: { status: "no_quote", reason: "amount too small" }
     }));
     vi.stubGlobal("fetch", fetchMock);
