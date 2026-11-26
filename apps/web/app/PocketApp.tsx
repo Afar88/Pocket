@@ -61,6 +61,38 @@ type SessionMeta = {
   payoutDailyCaps: Record<string, string>; payoutTokens: Address[];
   encryptedSessionKey: Hex; serializedSession: string;
 };
+type WalletMove = { hash: string; time: string; direction: "in" | "out"; amount: string; symbol: string; other: string };
+
+// Money in and out of the wallet, read from Celo through Blockscout's public
+// index of the chain (no key, CORS open).
+async function loadWalletMoves(address: string): Promise<WalletMove[]> {
+  const base = "https://celo.blockscout.com/api/v2/addresses/" + address;
+  const [tokenRes, txRes] = await Promise.all([
+    fetch(base + "/token-transfers", { cache: "no-store" }),
+    fetch(base + "/transactions", { cache: "no-store" })
+  ]);
+  if (!tokenRes.ok || !txRes.ok) throw new Error("Blockscout unavailable");
+  const tokens = await tokenRes.json() as { items?: { transaction_hash: string; timestamp: string; from: { hash: string }; to: { hash: string }; token: { symbol?: string; decimals?: string | null }; total?: { value?: string; decimals?: string | null } }[] };
+  const txs = await txRes.json() as { items?: { hash: string; timestamp: string; from: { hash: string }; to?: { hash: string } | null; value: string }[] };
+  const me = address.toLowerCase();
+  const moves: WalletMove[] = [];
+  const seen = new Set<string>();
+  for (const t of tokens.items ?? []) {
+    const decimals = Number(t.total?.decimals ?? t.token.decimals ?? 18);
+    const incoming = t.to.hash.toLowerCase() === me;
+    const key = t.transaction_hash + t.token.symbol + t.total?.value;
+    if (seen.has(key)) continue; seen.add(key);
+    moves.push({ hash: t.transaction_hash, time: t.timestamp, direction: incoming ? "in" : "out", amount: formatUnits(BigInt(t.total?.value ?? "0"), decimals), symbol: t.token.symbol ?? "token", other: incoming ? t.from.hash : t.to.hash });
+  }
+  for (const tx of txs.items ?? []) {
+    if (!tx.value || tx.value === "0") continue;
+    if (moves.some((m) => m.hash === tx.hash && m.symbol === "CELO")) continue;
+    const incoming = (tx.to?.hash ?? "").toLowerCase() === me;
+    moves.push({ hash: tx.hash, time: tx.timestamp, direction: incoming ? "in" : "out", amount: formatUnits(BigInt(tx.value), 18), symbol: "CELO", other: incoming ? tx.from.hash : (tx.to?.hash ?? "") });
+  }
+  return moves.sort((a, b) => (a.time < b.time ? 1 : -1)).slice(0, 25);
+}
+
 type PaymentRow = {
   kind: "paid" | "skipped"; pocketId: string; txHash: Hex; blockNumber: bigint;
   transactionIndex: number; logIndex: number;
@@ -239,6 +271,7 @@ export default function PocketApp() {
   const [usdtDecimals, setUsdtDecimals] = useState(6);
   const [spendMeter, setSpendMeter] = useState<{ used: bigint; cap: bigint } | null>(null);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  const [walletMoves, setWalletMoves] = useState<WalletMove[] | null>(null);
   const [pockets, setPockets] = useState<PocketView[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null);
@@ -352,7 +385,10 @@ export default function PocketApp() {
 
   const beginProgress = (title: string, labels: string[]) => setProgress({ title, steps: labels.map((label, index) => ({ label, state: index === 0 ? "active" : "pending" })) });
   const advanceProgress = (index: number) => setProgress((current) => current ? ({ ...current, steps: current.steps.map((step, i) => ({ ...step, state: i < index ? "done" : i === index ? "active" : "pending" })) }) : current);
-  const finishProgress = () => setProgress((current) => current ? { ...current, steps: current.steps.map((step) => ({ ...step, state: "done" })) } : current);
+  const finishProgress = () => {
+    setProgress((current) => current ? { ...current, steps: current.steps.map((step) => ({ ...step, state: "done" })) } : current);
+    window.setTimeout(() => setProgress((current) => current && current.steps.every((step) => step.state === "done") ? null : current), 6000);
+  };
   const stopProgress = () => setProgress((current) => current ? { ...current, steps: current.steps.map((step) => step.state === "active" ? { ...step, state: "stopped" } : step) } : current);
 
   const requireWriteSetup = useCallback(() => {
@@ -924,6 +960,14 @@ export default function PocketApp() {
   const dateText = (timestamp: bigint) => new Date(Number(timestamp) * 1000).toLocaleString();
   const periodText = (seconds: bigint) => seconds === 0n ? "Once" : seconds === 604_800n ? "Weekly" : seconds === 2_592_000n ? "Monthly" : "Every " + (Number(seconds) / 86_400) + " days";
   const pocketStatus = (p: PocketView) => p.closed ? "Completed" : p.paused ? "Paused" : p.sessionExpiry > 0n && p.sessionExpiry <= BigInt(Math.floor(Date.now() / 1000)) ? "Session expired" : p.agent === ZERO ? "Session not granted" : "Active";
+  useEffect(() => {
+    if (tab !== "activity" || !wallet?.address) return;
+    let cancelled = false;
+    setWalletMoves(null);
+    loadWalletMoves(wallet.address).then((moves) => { if (!cancelled) setWalletMoves(moves); }).catch(() => { if (!cancelled) setWalletMoves([]); });
+    return () => { cancelled = true; };
+  }, [tab, wallet?.address, pockets.length]);
+
   const sessionIsExpired = Boolean(sessionMeta && sessionMeta.expiry <= Math.floor(Date.now() / 1000));
 
   return (
@@ -936,7 +980,7 @@ export default function PocketApp() {
             <p className="sub">Your money. Your rules. Celo mainnet.</p>
           </div>
         </div>
-        <span className="pill">Chain {CELO_CHAIN_ID}</span>
+        <span className={"pill status " + (!wallet ? "off" : walletPending ? "pending" : "on")}><span className="dot" aria-hidden="true" />{!wallet ? "Signed out" : walletPending ? "Not active" : "Connected"}</span>
       </header>
 
       {tab === "home" && <Mascot />}
@@ -952,7 +996,7 @@ export default function PocketApp() {
       )}
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
-      {progress && <section className="panel progress-panel" aria-live="polite"><div className="progress-heading"><h2>{progress.title}</h2><span className="progress-state">{progress.steps.every((s) => s.state === "done") ? "Done" : progress.steps.some((s) => s.state === "stopped") ? "Stopped" : "In progress"}</span></div><ol className="progress-list">{progress.steps.map((step, index) => <li className={"progress-step " + step.state} key={step.label}><span className="step-index">{step.state === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><span>{step.label}</span><span className="step-state">{step.state === "active" ? "Working" : step.state === "done" ? "Done" : step.state === "stopped" ? "Stopped" : ""}</span></li>)}</ol></section>}
+      {progress && <section className="panel progress-panel progress-sheet" aria-live="polite"><div className="progress-heading"><h2>{progress.title}</h2><span className="progress-state">{progress.steps.every((s) => s.state === "done") ? "Done" : progress.steps.some((s) => s.state === "stopped") ? "Stopped" : "In progress"}</span>{(progress.steps.every((s) => s.state === "done") || progress.steps.some((s) => s.state === "stopped")) && <button type="button" className="sheet-close" aria-label="Close" onClick={() => setProgress(null)}>×</button>}</div><ol className="progress-list">{progress.steps.map((step, index) => <li className={"progress-step " + step.state} key={step.label}><span className="step-index">{step.state === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><span>{step.label}</span><span className="step-state">{step.state === "active" ? "Working" : step.state === "done" ? "Done" : step.state === "stopped" ? "Stopped" : ""}</span></li>)}</ol></section>}
 
       {tab === "home" && <>
       <section className="panel sample-panel"><div className="sample-heading"><span className="sample-label">Sample</span><span className="small">Illustration only · no live payment</span></div><h2>One pocket, one payout</h2><p className="small">A calm walkthrough of what happens when a scheduled pocket is due.</p><div className="sample-flow"><div className="sample-step"><span className="sample-dot">01</span><div><strong>Pocket is due</strong><span>The schedule reaches its next payout time.</span></div></div><div className="sample-step"><span className="sample-dot">02</span><div><strong>Textile swaps USDT to cNGN</strong><span>The wallet stays in control through its limited session.</span></div></div><div className="sample-step"><span className="sample-dot">03</span><div><strong>Recipient gets cNGN</strong><span>The confirmed payout is recorded on Celo.</span></div></div></div></section>
@@ -1055,8 +1099,15 @@ export default function PocketApp() {
       {tab === "home" && <section className="panel how-panel"><h2>How it works</h2><div className="how-strip"><div className="how-step"><span>01</span><strong>Your wallet</strong><small>Funds stay with you</small></div><div className="how-arrow">→</div><div className="how-step"><span>02</span><strong>Altana session key</strong><small>With daily limits</small></div><div className="how-arrow">→</div><div className="how-step"><span>03</span><strong>Pocket agent</strong><small>ERC-8004 #10132</small></div><div className="how-arrow">→</div><div className="how-step"><span>04</span><strong>Textile FX swap</strong><small>USDT to cNGN</small></div><div className="how-arrow">→</div><div className="how-step"><span>05</span><strong>Recipient</strong><small>Gets cNGN</small></div></div></section>}
 
       {tab === "activity" && <section className="panel payments-panel">
-        <h2>Activity <Info text="Payments and skips recorded on Celo, newest first. The agent checks about every 15 minutes; a late run still pays overdue pockets." /></h2>
-        {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p>No payment or skip events found.</p>:
+        <h2>Activity <Info text="Read straight from Celo, newest first: money in and out of your wallet, then Pocket payments and skips. The agent checks about every 15 minutes; a late run still pays overdue pockets." /></h2>
+        <h3 className="activity-heading">Wallet</h3>
+        {!wallet ? <p className="small">Sign in to see your wallet's activity.</p> : walletMoves === null ? <p className="small">Reading Celo…</p> : walletMoves.length === 0 ? <p className="small">No transfers yet.</p> :
+          <ul className="list">{walletMoves.map((m) => <li className="payment-receipt" key={m.hash + m.symbol + m.amount}>
+            <div className="receipt-top"><strong className={m.direction === "in" ? "move-in" : "move-out"}>{m.direction === "in" ? "+ " : "− "}{Number(m.amount).toLocaleString("en-US", { maximumFractionDigits: 6 })} {m.symbol}</strong><span className="small">{new Date(m.time).toLocaleString()}</span></div>
+            <div className="receipt-line"><div><span>{m.direction === "in" ? "From" : "To"}</span><code>{shortAddress(m.other as Address)}</code></div><a className="receipt-link" href={CELOSCAN_TX + m.hash} target="_blank" rel="noreferrer">Celoscan ↗</a></div>
+          </li>)}</ul>}
+        <h3 className="activity-heading">Pocket payments</h3>
+        {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p className="small">No payments yet.</p>:
           <ul className="list">{payments.map((item)=><li className="payment-receipt" key={item.txHash+item.pocketId+item.kind}>
             <div className="receipt-top"><strong>{item.kind==="paid"?"Payment":"Skipped"} · Pocket <code>#{item.pocketId}</code></strong><span className="small">{item.timestamp===undefined?"Block "+item.blockNumber.toString():new Date(Number(item.timestamp)*1000).toLocaleString()}</span></div>
             <div className="receipt-line">
