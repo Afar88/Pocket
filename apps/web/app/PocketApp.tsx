@@ -129,6 +129,19 @@ export default function PocketApp() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [sdk, setSdk] = useState<any>(null);
   const [wallet, setWallet] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+  async function copyAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address);
+    } catch {
+      // Older phone browsers: fall back to a hidden text field.
+      const field = document.createElement("textarea");
+      field.value = address; field.setAttribute("readonly", ""); field.style.position = "fixed"; field.style.opacity = "0";
+      document.body.appendChild(field); field.select(); document.execCommand("copy"); document.body.removeChild(field);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
   const [walletPending, setWalletPending] = useState(false);
   const [usdtBalance, setUsdtBalance] = useState("—");
   const [usdtDecimals, setUsdtDecimals] = useState(6);
@@ -838,7 +851,7 @@ export default function PocketApp() {
           <p className="small">USDt in your Altana wallet</p>
           <div className="balance">{usdtBalance === "—" ? "—" : usdtBalance + " USDt"}</div>
           <p className="sub">Funds stay in your wallet until a pocket is due.</p>
-          {wallet && <p className="meta">Wallet: {wallet.address}</p>}
+          {wallet && <p className="meta">Wallet: <code>{wallet.address}</code> <button type="button" className="secondary" onClick={() => void copyAddress(wallet.address)}>{copied ? "Copied" : "Copy"}</button></p>}
           {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt{setupFee ? ", plus about " + setupFee.celo + " CELO (about $" + setupFee.usd + ") for Altana's one-time setup" : ", plus CELO for Altana's one-time setup"}. Then create a pocket here. Until then, only this browser can open this wallet.</div>}
           {!wallet && setupFee && <p className="small">New wallets pay about {setupFee.celo} CELO (${setupFee.usd}) once, for Altana setup.</p>}
         </div>
