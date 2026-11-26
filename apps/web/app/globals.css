@@ -6,7 +6,7 @@
   --muted-strong: #c2ccda; --shadow: 0 16px 38px rgba(0, 0, 0, .22);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: var(--navy); color: var(--ink); }
+html, body { margin: 0; min-height: 100%; overflow-x: hidden; background: var(--navy); color: var(--ink); }
 body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, select, textarea { font: inherit; } button { cursor: pointer; }
 a { color: #ff8c96; text-decoration: none; } a:hover { color: #ffc0c5; text-decoration: underline; }
@@ -93,7 +93,7 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
 /* Tap-to-open help */
 .info { position: relative; display: inline-flex; vertical-align: middle; margin-left: 6px; }
 .info-button, .info-button:hover { box-shadow: none; width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--red); background: transparent; color: var(--red); font: 600 12px/1 inherit; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.info-pop { position: absolute; z-index: 20; top: 26px; left: -8px; width: min(280px, 78vw); background: var(--navy-deep); border: 1px solid var(--red); border-radius: 10px; padding: 10px 12px; color: #e5c6cc; font-size: 12px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45); word-break: break-word; }
+.info-pop { position: fixed; z-index: 45; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(340px, calc(100vw - 32px)); box-sizing: border-box; background: var(--navy-deep); border: 1px solid var(--red); border-radius: 14px; padding: 12px 14px; color: #e5c6cc; font-size: 13px; font-weight: 400; line-height: 1.5; text-transform: none; letter-spacing: normal; box-shadow: 0 10px 30px rgba(0,0,0,.55); overflow-wrap: anywhere; text-align: left; }
 
 /* Roo, the mascot */
 .mascot { position: relative; display: flex; flex-direction: column; align-items: center; margin: 4px 0 16px; }

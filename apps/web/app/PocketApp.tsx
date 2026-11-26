@@ -144,10 +144,20 @@ function sessionFromPockets(pockets: readonly PocketView[]): SessionMeta | null 
 // A small "i" button that shows its help text only when tapped.
 function Info({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    // Close on any tap elsewhere, on scroll, or when another info opens.
+    const close = () => setOpen(false);
+    const onOther = (e: Event) => { if ((e as CustomEvent).detail !== text) setOpen(false); };
+    const timer = window.setTimeout(() => document.addEventListener("click", close), 0);
+    window.addEventListener("scroll", close, { passive: true });
+    window.addEventListener("pocket-info-open", onOther);
+    return () => { window.clearTimeout(timer); document.removeEventListener("click", close); window.removeEventListener("scroll", close); window.removeEventListener("pocket-info-open", onOther); };
+  }, [open, text]);
   return (
     <span className="info">
-      <button type="button" className="info-button" aria-label="More info" aria-expanded={open} onClick={() => setOpen((v) => !v)}>i</button>
-      {open && <span className="info-pop" role="note" onClick={() => setOpen(false)}>{text}</span>}
+      <button type="button" className="info-button" aria-label="More info" aria-expanded={open} onClick={(e) => { e.stopPropagation(); if (!open) window.dispatchEvent(new CustomEvent("pocket-info-open", { detail: text })); setOpen((v) => !v); }}>i</button>
+      {open && <span className="info-pop" role="note">{text}</span>}
     </span>
   );
 }
