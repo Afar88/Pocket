@@ -149,6 +149,15 @@ function Mascot() {
   );
 }
 
+type Tab = "home" | "new" | "pockets" | "key" | "activity";
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "home", label: "Home", icon: "⌂" },
+  { id: "new", label: "New", icon: "+" },
+  { id: "pockets", label: "Pockets", icon: "▤" },
+  { id: "key", label: "Key", icon: "⚿" },
+  { id: "activity", label: "Activity", icon: "↻" }
+];
+
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
@@ -211,6 +220,7 @@ export default function PocketApp() {
   const [sdk, setSdk] = useState<any>(null);
   const [wallet, setWallet] = useState<any>(null);
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<Tab>("home");
   async function copyAddress(address: string) {
     try {
       await navigator.clipboard.writeText(address);
@@ -616,7 +626,7 @@ export default function PocketApp() {
           value: 0n
         }]);
       }
-      setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
+      setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate(""); setTab("pockets");
       if (!attachSession && sessionMeta) setMessage("Pocket saved. Your agent key doesn't cover it. Grant a new key to include it.");
       await refresh();
       finishProgress();
@@ -929,7 +939,7 @@ export default function PocketApp() {
         <span className="pill">Chain {CELO_CHAIN_ID}</span>
       </header>
 
-      <Mascot />
+      {tab === "home" && <Mascot />}
 
       {!config?.registryAddress && (
         <div className="notice">PocketRegistry is not set yet. Deploy the contract on Celo mainnet, then add REGISTRY_ADDRESS to both Render services.</div>
@@ -944,6 +954,7 @@ export default function PocketApp() {
       {message && <p className="success">{message}</p>}
       {progress && <section className="panel progress-panel" aria-live="polite"><div className="progress-heading"><h2>{progress.title}</h2><span className="progress-state">{progress.steps.every((s) => s.state === "done") ? "Done" : progress.steps.some((s) => s.state === "stopped") ? "Stopped" : "In progress"}</span></div><ol className="progress-list">{progress.steps.map((step, index) => <li className={"progress-step " + step.state} key={step.label}><span className="step-index">{step.state === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><span>{step.label}</span><span className="step-state">{step.state === "active" ? "Working" : step.state === "done" ? "Done" : step.state === "stopped" ? "Stopped" : ""}</span></li>)}</ol></section>}
 
+      {tab === "home" && <>
       <section className="panel sample-panel"><div className="sample-heading"><span className="sample-label">Sample</span><span className="small">Illustration only · no live payment</span></div><h2>One pocket, one payout</h2><p className="small">A calm walkthrough of what happens when a scheduled pocket is due.</p><div className="sample-flow"><div className="sample-step"><span className="sample-dot">01</span><div><strong>Pocket is due</strong><span>The schedule reaches its next payout time.</span></div></div><div className="sample-step"><span className="sample-dot">02</span><div><strong>Textile swaps USDT to cNGN</strong><span>The wallet stays in control through its limited session.</span></div></div><div className="sample-step"><span className="sample-dot">03</span><div><strong>Recipient gets cNGN</strong><span>The confirmed payout is recorded on Celo.</span></div></div></div></section>
 
       <section className="panel hero">
@@ -961,8 +972,8 @@ export default function PocketApp() {
         </div>
       </section>
 
-      <div className="grid">
-        <section className="panel form-panel">
+      </>}
+        {tab === "new" && <section className="panel form-panel">
           <h2>New pocket <Info text="Set who gets paid, how much, and how often. USDT goes straight across; other currencies are swapped through Textile at payout time." /></h2>
           <label>Name</label>
           <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={64} placeholder="Family upkeep" />
@@ -983,9 +994,9 @@ export default function PocketApp() {
           <label>First payment date and time</label>
           <input type="datetime-local" value={firstDue} onChange={(e) => setFirstDue(e.target.value)} />
           <button disabled={busy || rateLoading || !wallet || !readyForWrites} onClick={() => void createPocket()}>Create pocket</button>
-        </section>
+        </section>}
 
-        <section className="panel session-panel">
+        {tab === "key" && <section className="panel session-panel">
           <div className="section-heading"><div><h2>Agent key <Info text="A limited key that lets Pocket's agent pay your pockets. It can only send in your pocket currencies, let Textile swap USDT, and mark pockets paid or skipped. It can't edit your pockets, and it never spends more than your daily limit, fees included. It's locked so only the agent can open it." /></h2></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
           {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Session spend</span><strong className="mono">{spendMeter ? "Today: $" + formatUnits(spendMeter.used, usdtDecimals) + " of $" + formatUnits(spendMeter.cap, usdtDecimals) + " used, expires " + new Date(sessionMeta.expiry * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Spend unavailable"}</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>Textile vault executor · fill</span><code>{shortAddress(TEXTILE_VAULT_EXECUTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>Currencies it can pay</span><code>{(sessionMeta.payoutTokens ?? []).map((token)=>POCKET_CURRENCIES.find((c)=>c.address.toLowerCase()===token.toLowerCase())?.symbol ?? shortAddress(token)).join(", ") || "Regrant session for v2 token permissions"}</code></div><div className="contract-item"><span>PocketRegistry · markPaid / skipPocket</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
             <div><label>USDT the agent can spend per day <Info text="One limit shared by all pockets on this key." /></label><select value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)}>{USDT_DAILY_CAP_CHOICES.map((choice) => <option key={choice} value={choice}>{choice} USDT</option>)}</select></div>
@@ -997,10 +1008,10 @@ export default function PocketApp() {
           <p className="meta">Contracts <Info text={"Textile: " + TEXTILE_REACTOR + " · USDT: " + CELO_USDT + " · Registry: " + (config?.registryAddress || "Not deployed")} /></p>
               <button disabled={busy || !wallet || !readyForWrites || pockets.length === 0} onClick={() => void grantSession()}>Grant session key</button>
             </>}
-        </section>
-      </div>
+        </section>}
 
-      <section className="panel pockets-panel"><div className="section-heading"><div><h2>Your pockets <Info text="Rules are on Celo. Funds stay in your wallet until payout." /></h2></div>{wallet && <span className="count-pill">{pockets.filter((p) => !p.deleted).length} pockets</span>}</div>
+
+      {tab === "pockets" && <section className="panel pockets-panel"><div className="section-heading"><div><h2>Your pockets <Info text="Rules are on Celo. Funds stay in your wallet until payout." /></h2></div>{wallet && <span className="count-pill">{pockets.filter((p) => !p.deleted).length} pockets</span>}</div>
         {!wallet && <p>Sign in with your passkey to see your pockets.</p>}
         {wallet && pockets.length === 0 && <p>No pockets yet.</p>}
         {pockets.filter((p) => !p.deleted).map((p) => (
@@ -1039,11 +1050,11 @@ export default function PocketApp() {
             )}
           </div>
         ))}
-      </section>
+      </section>}
 
-      <section className="panel how-panel"><h2>How it works</h2><div className="how-strip"><div className="how-step"><span>01</span><strong>Your wallet</strong><small>Funds stay with you</small></div><div className="how-arrow">→</div><div className="how-step"><span>02</span><strong>Altana session key</strong><small>With daily limits</small></div><div className="how-arrow">→</div><div className="how-step"><span>03</span><strong>Pocket agent</strong><small>ERC-8004 #10132</small></div><div className="how-arrow">→</div><div className="how-step"><span>04</span><strong>Textile FX swap</strong><small>USDT to cNGN</small></div><div className="how-arrow">→</div><div className="how-step"><span>05</span><strong>Recipient</strong><small>Gets cNGN</small></div></div></section>
+      {tab === "home" && <section className="panel how-panel"><h2>How it works</h2><div className="how-strip"><div className="how-step"><span>01</span><strong>Your wallet</strong><small>Funds stay with you</small></div><div className="how-arrow">→</div><div className="how-step"><span>02</span><strong>Altana session key</strong><small>With daily limits</small></div><div className="how-arrow">→</div><div className="how-step"><span>03</span><strong>Pocket agent</strong><small>ERC-8004 #10132</small></div><div className="how-arrow">→</div><div className="how-step"><span>04</span><strong>Textile FX swap</strong><small>USDT to cNGN</small></div><div className="how-arrow">→</div><div className="how-step"><span>05</span><strong>Recipient</strong><small>Gets cNGN</small></div></div></section>}
 
-      <section className="panel payments-panel">
+      {tab === "activity" && <section className="panel payments-panel">
         <h2>Activity <Info text="Payments and skips recorded on Celo, newest first. The agent checks about every 15 minutes; a late run still pays overdue pockets." /></h2>
         {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p>No payment or skip events found.</p>:
           <ul className="list">{payments.map((item)=><li className="payment-receipt" key={item.txHash+item.pocketId+item.kind}>
@@ -1053,7 +1064,16 @@ export default function PocketApp() {
               <a className="receipt-link" href={CELOSCAN_TX+item.txHash} target="_blank" rel="noreferrer">Celoscan ↗</a>
             </div>
           </li>)}</ul>}
-      </section>
+      </section>}
+
+      <nav className="tabbar" aria-label="Pocket sections">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" className={"tab" + (tab === t.id ? " active" : "")} aria-current={tab === t.id ? "page" : undefined} onClick={() => { setTab(t.id); window.scrollTo({ top: 0 }); }}>
+            <span className="tab-icon" aria-hidden="true">{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </nav>
     </main>
   );
 }
