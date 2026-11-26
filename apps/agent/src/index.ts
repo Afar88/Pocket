@@ -12,6 +12,7 @@ import {
   CELO_USDT,
   CELO_RPC_DEFAULT,
   ERC20_ABI,
+  POCKET_AGENT_ID,
   POCKET_REGISTRY_ABI
 } from "@pocket/core";
 import { readAgentConfig, assertAttributionTag } from "./config.js";
@@ -173,6 +174,7 @@ async function main() {
     pollMs: runOnce ? 0 : POLL_MS,
     runOnce,
     workerIdentity: config.agentAddress,
+    erc8004AgentId: POCKET_AGENT_ID.toString(),
     maxUsdtDailyCap: maxUsdtDailyCap.toString()
   });
   await run();
