@@ -5,8 +5,7 @@ import {
   createClient,
   serializeSession,
   CELO,
-  signerFromPrivateKey
-} from "@altananetwork/sdk";
+  signerFromPrivateKey, signerFromPasskey } from "@altananetwork/sdk";
 import {
   createPublicClient,
   decodeEventLog,
@@ -77,10 +76,34 @@ const PERIODS = [
   { label: "Monthly", value: "2592000" }
 ];
 
+// A new passkey wallet only goes on chain with its first transaction. Until
+// then Celo has no record of the passkey, so "Sign in" cannot find it. Keep
+// the passkey's public details (wallet address, credential id, public key,
+// rpId; no secrets) in this browser until the wallet is active.
+const PENDING_PASSKEY_PREFIX = "pocket-passkey-pending:";
+type PendingPasskey = { address: string; id: string; publicKey: Hex; rpId?: string };
+function savePendingPasskey(record: PendingPasskey) {
+  window.localStorage.setItem(PENDING_PASSKEY_PREFIX + record.address.toLowerCase(), JSON.stringify(record));
+}
+function readPendingPasskey(address: string): PendingPasskey | null {
+  const raw = window.localStorage.getItem(PENDING_PASSKEY_PREFIX + address.toLowerCase());
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PendingPasskey; } catch { return null; }
+}
+function clearPendingPasskey(address: string) {
+  window.localStorage.removeItem(PENDING_PASSKEY_PREFIX + address.toLowerCase());
+}
+function passkeyLabel() {
+  const now = new Date();
+  return "Pocket " + now.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " " +
+    now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function PocketApp() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [sdk, setSdk] = useState<any>(null);
   const [wallet, setWallet] = useState<any>(null);
+  const [walletPending, setWalletPending] = useState(false);
   const [usdtBalance, setUsdtBalance] = useState("—");
   const [usdtDecimals, setUsdtDecimals] = useState(6);
   const [spendMeter, setSpendMeter] = useState<{ used: bigint; cap: bigint } | null>(null);
@@ -191,6 +214,9 @@ export default function PocketApp() {
     if (result.status !== "CONFIRMED" || !result.transactionHash) {
       throw new Error("Altana wallet action did not confirm: " + result.status);
     }
+    // First confirmed transaction puts the passkey on chain; Sign in works from now on.
+    clearPendingPasskey(activeWallet.address);
+    setWalletPending(false);
     setMessage("Confirmed: " + CELOSCAN_TX + result.transactionHash);
     return result.transactionHash as Hex;
   }, [requireWriteSetup]);
@@ -297,9 +323,36 @@ export default function PocketApp() {
       if (!config?.attributionTag) throw new Error("ATTRIBUTION_TAG must be configured before creating or changing wallets.");
       const client = createClient({ chains: [CELO], appCode: config.attributionTag });
       const rpId = window.location.hostname;
-      const result = recover
-        ? await client.recoverFromPasskey({ rpId })
-        : await client.createPasskeyWallet({ name: "Pocket", rpId });
+      let result: any;
+      let pending = false;
+      if (recover) {
+        try {
+          result = await client.recoverFromPasskey({ rpId });
+        } catch (reason) {
+          // Not on chain yet: rebuild it from the details saved when it was created here.
+          const text = reason instanceof Error ? reason.message : String(reason);
+          const found = /resolves to wallet (0x[0-9a-fA-F]{40})/.exec(text);
+          const saved = found?.[1] ? readPendingPasskey(found[1]) : null;
+          if (!found || !text.includes("no keys registered")) throw reason;
+          if (!saved) {
+            throw new Error("This wallet was never activated, and this browser has no saved copy of it. Create a new passkey wallet. Nothing on chain is lost.");
+          }
+          result = {
+            address: saved.address,
+            signer: signerFromPasskey({ kind: "webauthn", id: saved.id, publicKey: saved.publicKey, ...(saved.rpId ? { rpId: saved.rpId } : {}) })
+          };
+          pending = true;
+        }
+      } else {
+        result = await client.createPasskeyWallet({ name: passkeyLabel(), rpId });
+        const credential = result.signer?.credential;
+        if (credential?.kind === "webauthn") {
+          savePendingPasskey({ address: result.address, id: credential.id, publicKey: credential.publicKey, rpId: credential.rpId ?? rpId });
+        }
+        pending = true;
+      }
+      if (recover && !pending && readPendingPasskey(result.address)) clearPendingPasskey(result.address);
+      setWalletPending(pending);
       setSdk(client);
       setWallet(result);
       const key = sessionStorageKey(result.address);
@@ -319,7 +372,9 @@ export default function PocketApp() {
         setSessionMeta(null);
       }
       finishProgress();
-      setMessage("Passkey wallet ready: " + result.address);
+      setMessage(pending
+        ? "Wallet created: " + result.address + ". Not active yet."
+        : "Passkey wallet ready: " + result.address);
     } catch (reason) {
       stopProgress();
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -664,6 +719,7 @@ export default function PocketApp() {
           <div className="balance">{usdtBalance === "—" ? "—" : usdtBalance + " USDt"}</div>
           <p className="sub">Funds stay in your wallet until a pocket is due.</p>
           {wallet && <p className="meta">Wallet: {wallet.address}</p>}
+          {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt, then create a pocket on this page. Until then, only this browser can open this wallet.</div>}
         </div>
         <div className="actions">
           <button disabled={busy || !config?.attributionTag} onClick={() => void createWallet(false)}>Create passkey wallet</button>
