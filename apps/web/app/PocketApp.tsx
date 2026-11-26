@@ -80,6 +80,26 @@ const PERIODS = [
 // then Celo has no record of the passkey, so "Sign in" cannot find it. Keep
 // the passkey's public details (wallet address, credential id, public key,
 // rpId; no secrets) in this browser until the wallet is active.
+// datetime-local inputs read and write the phone's local time, not UTC.
+function toLocalInput(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// A time picked for "now" is already a little in the past by the time the
+// passkey prompt finishes. Treat anything within the last 30 minutes as now
+// and schedule it a minute ahead; older times are still refused.
+const NOW_GRACE_SECONDS = 1800n;
+function dueFromInput(value: string, label: string): bigint {
+  const picked = new Date(value).getTime();
+  if (!value || Number.isNaN(picked)) throw new Error(`Pick a ${label}.`);
+  const due = BigInt(Math.floor(picked / 1000));
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (due > now) return due;
+  if (now - due <= NOW_GRACE_SECONDS) return now + 60n;
+  throw new Error(`That ${label} has passed. Pick a time from now on.`);
+}
+
 const PENDING_PASSKEY_PREFIX = "pocket-passkey-pending:";
 type PendingPasskey = { address: string; id: string; publicKey: Hex; rpId?: string };
 function savePendingPasskey(record: PendingPasskey) {
@@ -126,7 +146,7 @@ export default function PocketApp() {
   const [liveRate, setLiveRate] = useState<string | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
   const [receiverNote, setReceiverNote] = useState("");
-  const [firstDue, setFirstDue] = useState(new Date(Date.now() + 60_000).toISOString().slice(0, 16));
+  const [firstDue, setFirstDue] = useState(toLocalInput(Date.now() + 5 * 60_000));
 
   const [usdtCap, setUsdtCap] = useState("5");
   const [expiryDays, setExpiryDays] = useState("30");
@@ -397,8 +417,8 @@ export default function PocketApp() {
       if (!payoutCap.trim()) throw new Error("Enter the daily payout cap in the receiver currency.");
       const payoutCapRaw = parseUnits(payoutCap, currency.decimals);
       const floorRaw = minRate.trim() ? parseUnits(minRate, 18) : 0n;
-      const due = BigInt(Math.floor(new Date(firstDue).getTime() / 1000));
-      if (amountRaw <= 0n || due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Amount and due date must be in the future.");
+      if (amountRaw <= 0n) throw new Error("Enter an amount above 0.");
+      const due = dueFromInput(firstDue, "first payment time");
       if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket at or below 5 USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const alreadyGrantedCap = pockets
@@ -476,7 +496,7 @@ export default function PocketApp() {
     setEditPayoutCap(formatUnits(p.payoutDailyCap, selected?.decimals ?? 18));
     setEditNote(p.note);
     setEditMinRate(formatUnits(p.minOutPerUsdt, 18));
-    setEditDue(new Date(Number(p.nextDue) * 1000).toISOString().slice(0, 16));
+    setEditDue(toLocalInput(Number(p.nextDue) * 1000));
   }
 
   async function saveEdit(id: bigint) {
@@ -492,8 +512,7 @@ export default function PocketApp() {
       const payoutCapRaw = parseUnits(editPayoutCap, currency.decimals);
       if (amountRaw <= 0n || amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket between 0 and 5 USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
-      const due = BigInt(Math.floor(new Date(editDue).getTime() / 1000));
-      if (due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("The next due date must be in the future.");
+      const due = dueFromInput(editDue, "next due time");
       await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
