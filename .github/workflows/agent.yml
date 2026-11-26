@@ -23,6 +23,7 @@ jobs:
       AGENT_ENC_PRIVATE_KEY: ${{ secrets.AGENT_ENC_PRIVATE_KEY }}
       ATTRIBUTION_TAG: ${{ vars.ATTRIBUTION_TAG }}
       REGISTRY_ADDRESS: ${{ vars.REGISTRY_ADDRESS }}
+      CELO_RPC: ${{ secrets.CELO_RPC }}
       POCKET_RUN_ONCE: "1"
     steps:
       - uses: actions/checkout@v4
