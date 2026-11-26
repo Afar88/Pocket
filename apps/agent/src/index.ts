@@ -12,6 +12,7 @@ import {
   CELO_USDT,
   CELO_RPC_DEFAULT,
   ERC20_ABI,
+  MAX_USDT_DAILY_CAP,
   POCKET_AGENT_ID,
   POCKET_REGISTRY_ABI
 } from "@pocket/core";
@@ -58,7 +59,7 @@ async function main() {
     abi: ERC20_ABI,
     functionName: "decimals"
   });
-  const maxUsdtDailyCap = parseUnits("5", Number(tokenDecimals));
+  const maxUsdtDailyCap = parseUnits(MAX_USDT_DAILY_CAP, Number(tokenDecimals));
 
   const listPockets = async (): Promise<PocketRecord[]> => {
     const count = await publicClient.readContract({

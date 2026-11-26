@@ -31,6 +31,8 @@ import {
   ALTANA_SPEND_INFOS_ABI,
   ERC20_ABI,
   POCKET_CURRENCIES,
+  MAX_USDT_DAILY_CAP,
+  USDT_DAILY_CAP_CHOICES,
   POCKET_CREATED_EVENT,
   POCKET_PAID_EVENT,
   POCKET_SKIPPED_EVENT,
@@ -521,7 +523,7 @@ export default function PocketApp() {
       const floorRaw = minRate.trim() ? parseUnits(minRate, 18) : 0n;
       if (amountRaw <= 0n) throw new Error("Enter an amount above 0.");
       const due = dueFromInput(firstDue, "first payment time");
-      if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket at or below 5 USDT.");
+      if (amountRaw > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("Keep each pocket at or below " + MAX_USDT_DAILY_CAP + " USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const attachSession = keyCovers(payoutToken, payoutCapRaw);
       beginProgress("Create pocket", ["Saving pocket to Celo", "Confirming pocket receipt", ...(attachSession ? ["Attaching session to pocket"] : [])]);
@@ -609,7 +611,7 @@ export default function PocketApp() {
       if (!currency) throw new Error("Choose a currency from the verified list.");
       const amountRaw = parseUnits(editAmount, usdtDecimals);
       const payoutCapRaw = parseUnits(editPayoutCap, currency.decimals);
-      if (amountRaw <= 0n || amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket between 0 and 5 USDT.");
+      if (amountRaw <= 0n || amountRaw > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("Keep each pocket between 0 and " + MAX_USDT_DAILY_CAP + " USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const due = dueFromInput(editDue, "next due time");
       await sendOwnerCalls([{
@@ -726,7 +728,7 @@ export default function PocketApp() {
       const registryPaymentCutoff = expiry - SESSION_SKIP_GRACE_SECONDS;
       if (registryPaymentCutoff <= Math.floor(Date.now() / 1000)) throw new Error("Choose a session expiry more than one hour from now.");
       const usdtLimit = parseUnits(usdtCap, usdtDecimals);
-      if (usdtLimit <= 0n || usdtLimit > parseUnits("5", usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than 5.");
+      if (usdtLimit <= 0n || usdtLimit > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than " + MAX_USDT_DAILY_CAP + ".");
       const activePockets = ownPockets.filter((p) => !p.deleted && !p.closed);
       const existingCaps: Record<string, bigint> = {};
       for (const p of activePockets) {
@@ -743,6 +745,7 @@ export default function PocketApp() {
       const payoutTokens: Address[] = [];
       for (const currency of POCKET_CURRENCIES) {
         const key = currency.address.toLowerCase();
+        if (currency.payable === false && !existingCaps[key]) continue;
         const existing = existingCaps[key] ?? 0n;
         let ceiling = 0n;
         if (currency.isUsdt) {
@@ -928,7 +931,7 @@ export default function PocketApp() {
           <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..." />
           <label>Receiver gets</label>
           <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(""); }}>
-            {POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
+            {POCKET_CURRENCIES.filter((currency)=>currency.payable!==false).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
             <option value={CELO_USDT}>US Dollar (USDT)</option>
           </select>
           <p className="small">MiniPay shows dollars only.</p>
@@ -950,8 +953,8 @@ export default function PocketApp() {
 
         <section className="panel session-panel">
           <div className="section-heading"><div><h2>Session key</h2><p className="small">A limited key for the Pocket agent.</p></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
-          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Session spend</span><strong className="mono">{spendMeter ? "Today: $" + formatUnits(spendMeter.used, usdtDecimals) + " of $" + formatUnits(spendMeter.cap, usdtDecimals) + " used, expires " + new Date(sessionMeta.expiry * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Spend unavailable"}</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>Textile vault executor · fill</span><code>{shortAddress(TEXTILE_VAULT_EXECUTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>Payout tokens · transfer</span><code>{(sessionMeta.payoutTokens ?? []).map((token)=>shortAddress(token)).join(", ") || "Regrant session for v2 token permissions"}</code></div><div className="contract-item"><span>PocketRegistry · markPaid / skipPocket</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
-            <div><label>USDT daily cap (max 5)</label><input value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)} inputMode="decimal" /></div>
+          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Session spend</span><strong className="mono">{spendMeter ? "Today: $" + formatUnits(spendMeter.used, usdtDecimals) + " of $" + formatUnits(spendMeter.cap, usdtDecimals) + " used, expires " + new Date(sessionMeta.expiry * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Spend unavailable"}</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>Textile vault executor · fill</span><code>{shortAddress(TEXTILE_VAULT_EXECUTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>Currencies it can pay</span><code>{(sessionMeta.payoutTokens ?? []).map((token)=>POCKET_CURRENCIES.find((c)=>c.address.toLowerCase()===token.toLowerCase())?.symbol ?? shortAddress(token)).join(", ") || "Regrant session for v2 token permissions"}</code></div><div className="contract-item"><span>PocketRegistry · markPaid / skipPocket</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
+            <div><label>USDT the agent can spend per day</label><select value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)}>{USDT_DAILY_CAP_CHOICES.map((choice) => <option key={choice} value={choice}>{choice} USDT</option>)}</select><p className="small">Shared by all pockets on this key.</p></div>
             <div><label>Payout token limits</label><span className="small">Each active pocket's token cap is included in the session.</span></div>
           </div>
           <label>Key expires in days</label>
@@ -983,7 +986,7 @@ export default function PocketApp() {
               <div>
                 <label>Name</label><input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
                 <label>Recipient</label><input value={editRecipient} onChange={(e) => setEditRecipient(e.target.value)} />
-                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap("");}}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
+                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap("");}}>{POCKET_CURRENCIES.filter((currency)=>currency.payable!==false).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
                 <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===editPayoutToken.toLowerCase())?.symbol})</label><input value={editPayoutCap} onChange={(e)=>setEditPayoutCap(e.target.value)} inputMode="decimal"/>
                 <label>Note to receiver</label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/><p className="small">Public on the blockchain.</p>
                 <label>Minimum rate floor (0 = off)</label><input value={editMinRate} onChange={(e)=>setEditMinRate(e.target.value)} inputMode="decimal"/>
