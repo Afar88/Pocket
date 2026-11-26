@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 10
     env:
       AGENT_PRIVATE_KEY: ${{ secrets.AGENT_PRIVATE_KEY }}
+      CELO_RPC: ${{ secrets.CELO_RPC }}
       ATTRIBUTION_TAG: ${{ vars.ATTRIBUTION_TAG }}
     steps:
       - uses: actions/checkout@v4
