@@ -120,6 +120,35 @@ function Info({ text }: { text: string }) {
   );
 }
 
+// Pocket's kangaroo. Tap it to hear what Pocket does; it says hello once
+// on a first visit.
+function Mascot() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!window.localStorage.getItem("pocket-mascot-seen")) {
+      setOpen(true);
+      window.localStorage.setItem("pocket-mascot-seen", "1");
+    }
+  }, []);
+  return (
+    <section className="mascot">
+      {open && (
+        <div className="mascot-bubble" role="dialog" aria-label="What Pocket is">
+          <button type="button" className="mascot-close" aria-label="Close" onClick={() => setOpen(false)}>×</button>
+          <strong>Hi, I'm Roo!</strong>
+          <p>Pocket sends money to people you care about, on your schedule.</p>
+          <p>Put USDt in your wallet, set who gets paid, how much and how often, and I pay them on Celo, in dollars or their local currency.</p>
+          <p>Your money stays in your wallet until a payment is due, and you can pause or stop anytime.</p>
+        </div>
+      )}
+      <button type="button" className="mascot-button" aria-label="What is Pocket?" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <img src="/pocket-kangaroo.png" alt="Roo, Pocket's kangaroo" width={297} height={480} />
+      </button>
+      {!open && <span className="mascot-hint">Tap Roo to learn what Pocket does</span>}
+    </section>
+  );
+}
+
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
@@ -899,6 +928,8 @@ export default function PocketApp() {
         </div>
         <span className="pill">Chain {CELO_CHAIN_ID}</span>
       </header>
+
+      <Mascot />
 
       {!config?.registryAddress && (
         <div className="notice">PocketRegistry is not set yet. Deploy the contract on Celo mainnet, then add REGISTRY_ADDRESS to both Render services.</div>
