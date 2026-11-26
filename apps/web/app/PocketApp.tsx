@@ -824,7 +824,7 @@ export default function PocketApp() {
           <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..." />
           <label>Receiver gets</label>
           <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(""); }}>
-            {POCKET_CURRENCIES.filter((item)=>!item.isUsdt).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
+            {POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
             <option value={CELO_USDT}>US Dollar (USDT)</option>
           </select>
           <p className="small">MiniPay shows dollars only.</p>
