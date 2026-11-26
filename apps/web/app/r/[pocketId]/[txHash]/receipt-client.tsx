@@ -40,7 +40,7 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
       setLoading(true);
       setError("");
       try {
-        if (!/^\d+$/.test(pocketId) || !isHex(txHash, { size: 32 })) {
+        if (!/^\d+$/.test(pocketId) || (!isHex(txHash) || txHash.length !== 66)) {
           throw new Error("This receipt link is not valid.");
         }
         const configResponse = await fetch("/api/config", { cache: "no-store" });
