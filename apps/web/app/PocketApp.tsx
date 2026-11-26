@@ -58,6 +58,7 @@ type SessionMeta = {
 };
 type PaymentRow = {
   kind: "paid" | "skipped"; pocketId: string; txHash: Hex; blockNumber: bigint;
+  transactionIndex: number; logIndex: number;
   payoutToken?: Address; usdtSpent?: bigint; amountOut?: bigint; timestamp?: bigint; reasonCode?: number;
 };
 type ProgressStep = { label: string; state: "pending" | "active" | "done" | "stopped" };
@@ -250,16 +251,20 @@ export default function PocketApp() {
           ]);
           for (const entry of paidLogs) if (ownIds.has(String(entry.args.pocketId))) paidRows.push({
             kind: "paid", pocketId: String(entry.args.pocketId), txHash: entry.transactionHash as Hex, blockNumber: entry.blockNumber,
+            transactionIndex: Number(entry.transactionIndex), logIndex: Number(entry.logIndex),
             payoutToken: entry.args.payoutToken, usdtSpent: entry.args.usdtSpent, amountOut: entry.args.amountOut, timestamp: entry.args.timestamp
           });
           for (const entry of skippedLogs) if (ownIds.has(String(entry.args.pocketId))) skippedRows.push({
             kind: "skipped", pocketId: String(entry.args.pocketId), txHash: entry.transactionHash as Hex, blockNumber: entry.blockNumber,
+            transactionIndex: Number(entry.transactionIndex), logIndex: Number(entry.logIndex),
             timestamp: entry.args.timestamp, reasonCode: Number(entry.args.reasonCode)
           });
           if (start === 0n) break;
           end = start - 1n;
         }
-        setPayments([...paidRows, ...skippedRows].sort((a,b) => Number(b.blockNumber-a.blockNumber)).slice(0,100));
+        setPayments([...paidRows, ...skippedRows].sort((a,b) =>
+          Number(b.blockNumber-a.blockNumber) || b.transactionIndex-a.transactionIndex || b.logIndex-a.logIndex
+        ));
         setHistoryUnavailable(false);
       } catch { setPayments([]); setHistoryUnavailable(true); }
 
@@ -754,7 +759,7 @@ export default function PocketApp() {
         <h2>Activity</h2><p className="small">Payments and skips from PocketRegistry events, newest first.</p>
         {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p>No payment or skip events found.</p>:
           <ul className="list">{payments.map((item)=><li className="payment-receipt" key={item.txHash+item.pocketId+item.kind}>
-            <div className="receipt-top"><strong>{item.kind==="paid"?"Payment":"Skipped"} · Pocket <code>#{item.pocketId}</code></strong><span className="small">Block <code>{item.blockNumber.toString()}</code></span></div>
+            <div className="receipt-top"><strong>{item.kind==="paid"?"Payment":"Skipped"} · Pocket <code>#{item.pocketId}</code></strong><span className="small">{item.timestamp===undefined?"Block "+item.blockNumber.toString():new Date(Number(item.timestamp)*1000).toLocaleString()}</span></div>
             <div className="receipt-line">
               {item.kind==="paid"?<><div><span>USDT spent</span><strong>{item.usdtSpent===undefined?"—":formatUnits(item.usdtSpent,usdtDecimals)+" USDT"}</strong></div><div><span>Amount out</span><strong>{item.amountOut===undefined?"—":formatUnits(item.amountOut,POCKET_CURRENCIES.find((x)=>x.address.toLowerCase()===item.payoutToken?.toLowerCase())?.decimals??18)+" "+(POCKET_CURRENCIES.find((x)=>x.address.toLowerCase()===item.payoutToken?.toLowerCase())?.symbol??"Token")}</strong></div><a className="receipt-link" href={"/r/"+item.pocketId+"/"+item.txHash}>Receipt ↗</a></>:<div><span>Reason</span><strong>{({1:"rate_below_floor",2:"over_cap",3:"no_quote",4:"session_expired"} as Record<number,string>)[item.reasonCode??0]??"unknown"}</strong></div>}
               <a className="receipt-link" href={CELOSCAN_TX+item.txHash} target="_blank" rel="noreferrer">Celoscan ↗</a>
