@@ -151,6 +151,7 @@ export default function PocketApp() {
   const [minRate, setMinRate] = useState("");
   const [liveRate, setLiveRate] = useState<string | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
+  const [rateSource, setRateSource] = useState<"bid" | "last" | null>(null);
   const [receiverNote, setReceiverNote] = useState("");
   const [firstDue, setFirstDue] = useState(toLocalInput(Date.now() + 5 * 60_000));
 
@@ -216,25 +217,32 @@ export default function PocketApp() {
       return;
     }
     let cancelled = false;
-    setRateLoading(true);
     setLiveRate(null);
-    fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("No live Textile rate is available for " + currency.symbol + ".");
-        return await response.json() as { bid: string };
-      })
-      .then(({ bid }) => {
-        if (cancelled) return;
-        const live = parseUnits(bid, 18);
-        const floor = live * 98n / 100n;
-        setLiveRate(bid);
-        setMinRate(formatUnits(floor, 18));
-      })
-      .catch(() => {
-        if (!cancelled) { setLiveRate(null); setMinRate(""); }
-      })
-      .finally(() => { if (!cancelled) setRateLoading(false); });
-    return () => { cancelled = true; };
+    setRateSource(null);
+    // Read a fresh rate now and every minute while this currency is picked.
+    const load = (first: boolean) => {
+      if (first) setRateLoading(true);
+      fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("No live Textile rate is available for " + currency.symbol + ".");
+          return await response.json() as { bid: string; source?: "bid" | "last" };
+        })
+        .then(({ bid, source }) => {
+          if (cancelled) return;
+          const live = parseUnits(bid, 18);
+          const floor = live * 98n / 100n;
+          setLiveRate(bid);
+          setRateSource(source ?? "bid");
+          if (first) setMinRate(formatUnits(floor, 18));
+        })
+        .catch(() => {
+          if (!cancelled && first) { setLiveRate(null); setRateSource(null); setMinRate(""); }
+        })
+        .finally(() => { if (!cancelled && first) setRateLoading(false); });
+    };
+    load(true);
+    const timer = window.setInterval(() => load(false), 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [payoutToken]);
 
   const beginProgress = (title: string, labels: string[]) => setProgress({ title, steps: labels.map((label, index) => ({ label, state: index === 0 ? "active" : "pending" })) });
@@ -862,7 +870,7 @@ export default function PocketApp() {
           <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===payoutToken.toLowerCase())?.symbol})</label>
           <input value={payoutCap} onChange={(e)=>setPayoutCap(e.target.value)} inputMode="decimal"/>
           <label>Minimum rate floor (local currency per USDT)</label><input value={minRate} onChange={(e) => setMinRate(e.target.value)} inputMode="decimal" placeholder="0 = off"/>
-           <p className="small">{rateLoading ? "Fetching live Textile rate…" : liveRate ? "Live Textile rate: " + liveRate + " " + (POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.symbol ?? "") + " per USDT. Floor prefilled 2% below." : "No live Textile bid available. Set a floor manually or leave 0 (off)."}</p>
+           <p className="small">{POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.isUsdt ? "USDT goes across 1:1. No rate needed." : rateLoading ? "Fetching live Textile rate…" : liveRate ? (rateSource === "last" ? "Last Textile trade: " : "Live Textile rate: ") + liveRate + " " + (POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.symbol ?? "") + " per USDT. Updates every minute." : "Textile rate unavailable right now. Set a floor or leave 0 (off)."}</p>
           <label>Note to receiver</label><textarea maxLength={80} value={receiverNote} onChange={(e)=>setReceiverNote(e.target.value)} placeholder="A short public message"/>
           <p className="small">Public on the blockchain. {receiverNote.length}/80</p>
           <label>First payment date and time</label>
