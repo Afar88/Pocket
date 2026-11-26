@@ -15,6 +15,14 @@ export const TEXTILE_REACTOR = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" as A
 /** Textile Operator Vault fills: approve USDT to this executor and call fill((bytes,bytes)). Source: docs.textilecredit.com/protocol/address-book.html (Celo). */
 export const TEXTILE_VAULT_EXECUTOR = "0x01b006d5c687bde182aa36F542f1f014144742e2" as Address;
 export const ERC8004_IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" as Address;
+/** Pocket's agent on the ERC-8004 identity registry (registered 2026-11-25). */
+export const POCKET_AGENT_ID = 10132n;
+export const POCKET_AGENT_ADDRESS = "0x700E4d3Dd9379fA164AD3E0DeD8fe0731b02f2aE" as Address;
+export const ERC8004_OWNER_OF_ABI = [{
+  type: "function", name: "ownerOf", stateMutability: "view",
+  inputs: [{ name: "tokenId", type: "uint256" }],
+  outputs: [{ name: "", type: "address" }]
+}] as const;
 export const ALTANA_KEYSTORE = "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c" as Address;
 
 export type PocketCurrency = {

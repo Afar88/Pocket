@@ -11,10 +11,16 @@ import {
   type Hex
 } from "viem";
 import { celo } from "viem/chains";
+import { verifyTx } from "@celo/attribution-tags";
 import {
   CELO_CHAIN_ID,
   CELO_RPC_DEFAULT,
+  CELOSCAN_ADDRESS,
   CELOSCAN_TX,
+  ERC8004_IDENTITY_REGISTRY,
+  ERC8004_OWNER_OF_ABI,
+  POCKET_AGENT_ADDRESS,
+  POCKET_AGENT_ID,
   POCKET_CURRENCIES,
   POCKET_PAID_EVENT,
   POCKET_REGISTRY_ABI
@@ -36,6 +42,8 @@ type ReceiptState = {
   recipient: Address;
   timestamp: bigint;
   txHash: Hex;
+  agentOwner: Address | null;
+  tagFound: boolean | null;
 } | null;
 
 export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; txHash: string }) {
@@ -54,7 +62,7 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
         }
         const configResponse = await fetch("/api/config", { cache: "no-store" });
         if (!configResponse.ok) throw new Error("Pocket configuration is unavailable.");
-        const config = await configResponse.json() as { chainId: number; rpcUrl?: string; registryAddress?: string };
+        const config = await configResponse.json() as { chainId: number; rpcUrl?: string; registryAddress?: string; attributionTag?: string };
         if (config.chainId !== CELO_CHAIN_ID || !config.registryAddress) throw new Error("PocketRegistry is not configured for Celo mainnet.");
 
         const client = createPublicClient({
@@ -103,13 +111,37 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
         });
         if (!transferVerified) throw new Error("This receipt has no matching payout-token transfer from the pocket owner to the receiver.");
 
+        // Link the payment to Pocket's ERC-8004 agent: read the ID's owner live and check the tx's attribution tag.
+        // Neither check blocks the receipt; a failed read shows as "not checked".
+        let agentOwner: Address | null = null;
+        try {
+          agentOwner = await client.readContract({
+            address: ERC8004_IDENTITY_REGISTRY,
+            abi: ERC8004_OWNER_OF_ABI,
+            functionName: "ownerOf",
+            args: [POCKET_AGENT_ID]
+          });
+        } catch { agentOwner = null; }
+        let tagFound: boolean | null = null;
+        if (config.attributionTag) {
+          try {
+            const tags = await verifyTx({
+              client: client as unknown as Parameters<typeof verifyTx>[0]["client"],
+              hash
+            });
+            tagFound = Boolean(tags?.codes.includes(config.attributionTag));
+          } catch { tagFound = null; }
+        }
+
         const result: ReceiptState = {
           amount: formatUnits(paid.amountOut, currency.decimals),
           currency: currency.symbol,
           note: pocket.note,
           recipient: pocket.recipient,
           timestamp: paid.timestamp,
-          txHash: hash
+          txHash: hash,
+          agentOwner,
+          tagFound
         };
         if (!cancelled) setReceipt(result);
       } catch (reason) {
@@ -124,7 +156,7 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
 
   function shareWhatsApp() {
     const text = receipt
-      ? "Pocket payment receipt: " + receipt.amount + " " + receipt.currency + " · " + receipt.note + " · " + window.location.href
+      ? "Pocket payment receipt: " + receipt.amount + " " + receipt.currency + " · " + receipt.note + " · paid by Pocket agent #" + POCKET_AGENT_ID.toString() + " · " + window.location.href
       : window.location.href;
     window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener,noreferrer");
   }
@@ -145,10 +177,14 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
               <div><span>Recipient</span><code>{receipt.recipient}</code></div>
               <div><span>Public note</span><strong>{receipt.note || "—"}</strong></div>
               <div><span>Confirmed at</span><strong>{new Date(Number(receipt.timestamp) * 1000).toLocaleString()}</strong></div>
+              <div><span>Paid by</span><strong>Pocket agent · ERC-8004 #{POCKET_AGENT_ID.toString()}</strong></div>
+              <div><span>Agent ID owner</span><strong>{receipt.agentOwner === null ? "Not checked" : receipt.agentOwner.toLowerCase() === POCKET_AGENT_ADDRESS.toLowerCase() ? "Verified" : "Changed"}</strong></div>
+              <div><span>Pocket tag</span><strong>{receipt.tagFound === null ? "Not checked" : receipt.tagFound ? "On this payment" : "Not found"}</strong></div>
               <div><span>Transaction</span><code>{receipt.txHash}</code></div>
             </div>
             <div className="actions">
               <a className="receipt-link" href={CELOSCAN_TX + receipt.txHash} target="_blank" rel="noreferrer">View on Celoscan ↗</a>
+              <a className="receipt-link" href={CELOSCAN_ADDRESS + POCKET_AGENT_ADDRESS} target="_blank" rel="noreferrer">Agent #{POCKET_AGENT_ID.toString()} ↗</a>
               <button onClick={shareWhatsApp}>Share on WhatsApp</button>
             </div>
           </div>
