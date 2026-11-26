@@ -86,3 +86,6 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .sample-step { animation: none; border-color: #2d4664; background: rgba(5, 13, 27, .46); }
 }
+
+.pocket-card .pocket-facts { margin-top: 6px; }
+.pocket-card textarea { min-height: 72px; }

@@ -6,6 +6,10 @@ import {
   type Session
 } from "@altananetwork/sdk";
 import { agentEncKeypair, openSealed, sealToAgent } from "@pocket/core";
+import { createPocketSession } from "../src/altana.js";
+import type { AgentConfig } from "../src/config.js";
+import type { PocketRecord } from "../src/types.js";
+import { keccak256 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { Address } from "viem";
 
@@ -49,6 +53,42 @@ describe("sealed session key hand-off", () => {
     );
     expect(restored.publicKey).toBe(session.publicKey);
     expect(restored.walletAddress).toBe(wallet);
+    expect(restored.expiry).toBe(session.expiry);
+  });
+
+  it("keeps a still-live Altana key usable for an expiry skip after the Pocket payment cutoff", async () => {
+    const agentKeys = agentEncKeypair();
+    const { session, secret } = grantedSession();
+    const now = Math.floor(Date.now() / 1000);
+    const pocket = {
+      id: 1n,
+      owner: wallet,
+      recipient: wallet,
+      amountUsdt: 1_000_000n,
+      payoutToken: wallet,
+      period: 86_400n,
+      nextDue: BigInt(now - 60),
+      label: "Test",
+      note: "",
+      paused: false,
+      closed: false,
+      deleted: false,
+      agent: wallet,
+      sessionKeyId: keccak256(session.publicKey),
+      sessionExpiry: BigInt(now - 1),
+      usdtDailyCap: 5_000_000n,
+      payoutDailyCap: 1_000_000n,
+      minOutPerUsdt: 0n,
+      lastSkippedDue: 0n,
+      lastSkippedReason: 0,
+      encryptedSessionKey: sealToAgent(agentKeys.publicKey, secret),
+      serializedSession: JSON.stringify(serializeSession(session))
+    } as PocketRecord;
+    const config = { encPrivateKey: agentKeys.privateKey } as AgentConfig;
+    const publicClient = {
+      readContract: async () => true
+    };
+    const restored = await createPocketSession(config, publicClient, pocket);
     expect(restored.expiry).toBe(session.expiry);
   });
 

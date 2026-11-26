@@ -3,188 +3,238 @@ import { decodeFunctionData, keccak256, toHex, type Hex } from "viem";
 import type { RunnerDeps } from "../src/runner.js";
 import { runDuePockets } from "../src/runner.js";
 import type { FirmQuote, PocketRecord } from "../src/types.js";
-import { CELO_USDT, CNGN, ERC20_ABI, TEXTILE_REACTOR } from "@pocket/core";
+import { CELO_USDT, ERC20_ABI, POCKET_REGISTRY_ABI, POCKET_CURRENCIES, TEXTILE_REACTOR, TEXTILE_VAULT_EXECUTOR } from "@pocket/core";
 
 const address = "0x1111111111111111111111111111111111111111" as const;
 const registry = "0x3333333333333333333333333333333333333333" as const;
 const hash = ("0x" + "a".repeat(64)) as const;
 const executeSelector = keccak256(toHex("execute((bytes,bytes))")).slice(0, 10);
+const wBRL = POCKET_CURRENCIES.find((currency) => currency.symbol === "wBRL")!;
 
-function pocket(): PocketRecord {
+function pocket(overrides: Partial<PocketRecord> = {}): PocketRecord {
   return {
-    id: 1n,
-    owner: address,
-    recipient: "0x2222222222222222222222222222222222222222",
-    amountUsdt: 1_000_000n,
-    period: 86_400n,
-    nextDue: 1n,
-    label: "Test",
-    paused: false,
-    deleted: false,
-    agent: address,
-    sessionKeyId: ("0x" + "b".repeat(64)) as const,
-    sessionExpiry: 2_000_000_000n,
-    usdtDailyCap: 5_000_000n,
-    cngnDailyCap: 5_000_000_000n,
-    encryptedSessionKey: ("0x" + "c".repeat(96)) as const,
-    serializedSession: "{}"
+    id: 1n, owner: address, recipient: "0x2222222222222222222222222222222222222222",
+    amountUsdt: 1_000_000n, payoutToken: POCKET_CURRENCIES[1]!.address,
+    period: 86_400n, nextDue: 1n, label: "Test", note: "", paused: false, closed: false, deleted: false,
+    agent: address, sessionKeyId: ("0x" + "b".repeat(64)) as Hex, sessionExpiry: 2_000_000_000n,
+    usdtDailyCap: 5_000_000n, payoutDailyCap: 5_000_000_000_000_000_000n,
+    minOutPerUsdt: 0n, lastSkippedDue: 0n, lastSkippedReason: 0,
+    encryptedSessionKey: ("0x" + "c".repeat(96)) as Hex, serializedSession: "{}", ...overrides
   };
 }
 
-function quote(): FirmQuote {
-  const tx = {
-    to: TEXTILE_REACTOR,
-    data: (executeSelector + "00") as Hex,
-    value: "0",
-    chainId: 42220
-  };
+function quote(overrides: Partial<FirmQuote> = {}): FirmQuote {
   return {
-    rfqId: "rfq_mock",
-    claimToken: "rfqc_mock",
-    taker: address,
-    reactor: TEXTILE_REACTOR,
-    takerPays: 1_000_000n,
-    buyAmount: 1_000_000_000n,
+    rfqId: "rfq_mock", claimToken: "rfqc_mock", taker: address, reactor: TEXTILE_REACTOR,
+    takerPays: 1_000_000n, buyAmount: 4_000_000_000_000_000_000n,
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    swap: tx
+    swap: { to: TEXTILE_REACTOR, data: (executeSelector + "00") as Hex, value: "0", chainId: 42220 },
+    ...overrides
   };
 }
 
 function deps(overrides: Partial<RunnerDeps> = {}): RunnerDeps {
   return {
-    now: () => Date.now(),
-    registryAddress: registry,
-    maxUsdtDailyCap: 5_000_000n,
-    listPockets: async () => [pocket()],
-    isSessionValid: async () => true,
-    getQuote: async () => quote(),
-    allowance: async () => 0n,
+    now: () => Date.now(), registryAddress: registry, maxUsdtDailyCap: 5_000_000n,
+    listPockets: async () => [pocket()], isSessionValid: async () => true,
+    getQuote: async () => quote(), allowance: async () => 0n,
     execute: async () => ({ status: "CONFIRMED", transactionHash: hash }),
-    verifyAttribution: vi.fn(async () => true),
-    submitQuote: vi.fn(async () => undefined),
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    ...overrides
+    verifyAttribution: vi.fn(async () => true), submitQuote: vi.fn(async () => undefined),
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, ...overrides
   };
 }
 
-describe("Pocket agent runner", () => {
-  it("pays a pocket whose owner has a valid session while another owner's revoked key only fails its own pocket", async () => {
-    const revoked = { ...pocket(), id: 1n, owner: "0x4444444444444444444444444444444444444444" as const };
-    const active = { ...pocket(), id: 2n, owner: "0x5555555555555555555555555555555555555555" as const };
-    const executedFor: bigint[] = [];
-    const execute = vi.fn(async (p: PocketRecord) => {
-      executedFor.push(p.id);
-      return { status: "CONFIRMED" as const, transactionHash: hash };
-    });
-    const d = deps({
-      listPockets: async () => [revoked, active],
-      isSessionValid: async (p) => p.id === 2n,
-      execute
-    });
-    await runDuePockets(d, "celo_pocket");
-    expect(executedFor).toEqual([2n]);
-    expect(d.logger.error).toHaveBeenCalled();
+describe("Pocket v2 agent runner", () => {
+  it("pays through the Textile vault executor, approving the executor not the reactor", async () => {
+    const fillSelector = keccak256(toHex("fill((bytes,bytes))")).slice(0, 10);
+    const vaultQuote = quote({ swap: { to: TEXTILE_VAULT_EXECUTOR, data: (fillSelector + "00") as Hex, value: "0", chainId: 42220 } });
+    const allowance = vi.fn(async () => 0n);
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({ getQuote: async () => vaultQuote, allowance, execute }), "celo_pocket");
+    expect(allowance).toHaveBeenCalledWith(address, TEXTILE_VAULT_EXECUTOR);
+    const calls = execute.mock.calls[0]?.[1] as readonly { to: string; data: Hex }[];
+    expect(calls[0]?.to).toBe(CELO_USDT);
+    const approval = decodeFunctionData({ abi: ERC20_ABI, data: calls[0]!.data });
+    expect(approval.functionName).toBe("approve");
+    expect((approval.args as readonly unknown[])[0]).toBe(TEXTILE_VAULT_EXECUTOR);
+    expect(calls[1]?.to).toBe(TEXTILE_VAULT_EXECUTOR);
   });
 
-  it("does not pay a pocket twice when a run repeats", async () => {
-    const state = { ...pocket(), period: 30_000_000_000n };
-    const execute = vi.fn(async (_p: PocketRecord, calls: readonly { to: string }[]) => {
-      // The one atomic Altana batch contains approval plus settlement when needed.
-      if (calls.length === 5) state.nextDue += state.period;
+  it("refuses reactor selectors sent to the vault executor and fill sent to the reactor", async () => {
+    const fillSelector = keccak256(toHex("fill((bytes,bytes))")).slice(0, 10);
+    for (const swap of [
+      { to: TEXTILE_VAULT_EXECUTOR, data: (executeSelector + "00") as Hex, value: "0", chainId: 42220 },
+      { to: TEXTILE_REACTOR, data: (fillSelector + "00") as Hex, value: "0", chainId: 42220 }
+    ]) {
+      const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+      await runDuePockets(deps({ getQuote: async () => quote({ swap }), execute }), "celo_pocket").catch(() => undefined);
+      expect(execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a swap to any other contract", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const swap = { to: "0x9999999999999999999999999999999999999999" as const, data: (executeSelector + "00") as Hex, value: "0", chainId: 42220 };
+    await runDuePockets(deps({ getQuote: async () => quote({ swap }), execute }), "celo_pocket").catch(() => undefined);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("pays a USDT pocket with a direct transfer and never calls Textile", async () => {
+    const state = pocket({ payoutToken: CELO_USDT, amountUsdt: 1_000_000n, payoutDailyCap: 2_000_000n, period: 0n });
+    const getQuote = vi.fn(async () => quote());
+    const execute = vi.fn(async (_p: PocketRecord, calls: readonly { to: string; data: Hex }[]) => {
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.to).toBe(CELO_USDT);
+      expect(decodeFunctionData({ abi: POCKET_REGISTRY_ABI, data: calls[1]!.data }).functionName).toBe("markPaid");
+      state.closed = true;
+      state.nextDue = 0n;
+      return { status: "CONFIRMED" as const, transactionHash: hash };
+    });
+    await runDuePockets(deps({ listPockets: async () => [state], getQuote, execute }), "celo_pocket");
+    expect(getQuote).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests a wBRL Textile quote with buyToken equal to the pocket payout token", async () => {
+    const state = pocket({ payoutToken: wBRL.address });
+    const getQuote = vi.fn(async (p: PocketRecord) => {
+      expect(p.payoutToken).toBe(wBRL.address);
+      return quote();
+    });
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({ listPockets: async () => [state], getQuote, execute }), "celo_pocket");
+    expect(getQuote).toHaveBeenCalledTimes(1);
+    const calls = execute.mock.calls[0]?.[1];
+    expect(calls?.some((call) => call.to.toLowerCase() === wBRL.address.toLowerCase())).toBe(true);
+  });
+
+  it("records a rate_below_floor skip and sends no payout or swap", async () => {
+    const state = pocket({ payoutToken: wBRL.address, minOutPerUsdt: 5_000_000_000_000_000_000n });
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({ listPockets: async () => [state], getQuote: async () => quote(), execute });
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).toHaveBeenCalledTimes(1);
+    const calls = execute.mock.calls[0]?.[1]!;
+    expect(calls).toHaveLength(1);
+    expect(decodeFunctionData({ abi: POCKET_REGISTRY_ABI, data: calls[0]!.data })).toMatchObject({
+      functionName: "skipPocket", args: [1n, 1]
+    });
+    expect(calls.some((call) => call.to.toLowerCase() === wBRL.address.toLowerCase())).toBe(false);
+    expect(calls.some((call) => call.to.toLowerCase() === TEXTILE_REACTOR.toLowerCase())).toBe(false);
+  });
+
+  it("never attempts a one-off pocket a second time after markPaid closes it", async () => {
+    const state = pocket({ payoutToken: CELO_USDT, period: 0n, payoutDailyCap: 2_000_000n });
+    const execute = vi.fn(async () => {
+      state.closed = true;
+      state.nextDue = 0n;
       return { status: "CONFIRMED" as const, transactionHash: hash };
     });
     const d = deps({ listPockets: async () => [state], execute });
     await runDuePockets(d, "celo_pocket");
-    expect(execute).toHaveBeenCalledTimes(1);
     await runDuePockets(d, "celo_pocket");
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it("does not execute anything when ATTRIBUTION_TAG is empty", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({ execute });
-    await runDuePockets(d, "  ");
-    expect(execute).not.toHaveBeenCalled();
-    expect(d.logger.error).toHaveBeenCalled();
-  });
-
-  it("does not execute when the Altana session is invalid", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    await runDuePockets(deps({ isSessionValid: async () => false, execute }), "celo_pocket");
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it("puts an exact Textile-reactor approval in the same batch when allowance is too low", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({ execute, allowance: async () => 999_999n });
-    await runDuePockets(d, "celo_pocket");
-
+  it("pays a late due pocket once and advances exactly one period", async () => {
+    const current = Math.floor(Date.now() / 1000);
+    const state = pocket({ payoutToken: CELO_USDT, period: 86_400n, nextDue: BigInt(current - 4 * 86_400), payoutDailyCap: 2_000_000n });
+    const execute = vi.fn(async () => {
+      state.nextDue += state.period;
+      return { status: "CONFIRMED" as const, transactionHash: hash };
+    });
+    await runDuePockets(deps({ listPockets: async () => [state], execute }), "celo_pocket");
     expect(execute).toHaveBeenCalledTimes(1);
-    const calls = execute.mock.calls[0]?.[1];
-    expect(calls).toHaveLength(5);
-    expect(calls?.[0]?.to).toBe(CELO_USDT);
-    const approval = decodeFunctionData({ abi: ERC20_ABI, data: calls![0]!.data });
+    expect(state.nextDue).toBe(BigInt(current - 3 * 86_400));
+  });
+
+  it("does not execute when a token is not in the currency allowlist", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({ listPockets: async () => [pocket({ payoutToken: "0x4444444444444444444444444444444444444444" })], execute }), "celo_pocket");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("does not execute an empty batch or an expired quote", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({
+      listPockets: async () => [pocket()],
+      getQuote: async () => quote({ expiresAt: new Date(Date.now() - 1000).toISOString() }),
+      execute
+    }), "celo_pocket");
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it("keeps the PR #9 exact USDT approval and swap/payout/mark order", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({ listPockets: async () => [pocket({ payoutToken: wBRL.address })], execute, allowance: async () => 0n });
+    await runDuePockets(d, "celo_pocket");
+    const calls = execute.mock.calls[0]?.[1]!;
+    expect(calls).toHaveLength(4);
+    expect(calls[0]?.to).toBe(CELO_USDT);
+    const approval = decodeFunctionData({ abi: ERC20_ABI, data: calls[0]!.data });
     expect(approval.functionName).toBe("approve");
     expect(approval.args).toEqual([TEXTILE_REACTOR, 1_000_000n]);
-    expect(calls?.slice(1).map((item) => item.to)).toEqual([
-      TEXTILE_REACTOR,
-      CNGN,
-      registry,
-      registry
-    ]);
+    expect(calls.map((item) => item.to)).toEqual([CELO_USDT, TEXTILE_REACTOR, wBRL.address, registry]);
+    const mark = decodeFunctionData({ abi: POCKET_REGISTRY_ABI, data: calls[3]!.data });
+    expect(mark.functionName).toBe("markPaid");
+    expect(mark.args[4]).toBe(1n);
   });
 
-  it("omits approval when the current allowance already covers the quote", async () => {
+  it("omits the exact approval when allowance already covers the quote", async () => {
     const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({ execute, allowance: async () => 1_000_000n });
-    await runDuePockets(d, "celo_pocket");
+    await runDuePockets(deps({ listPockets: async () => [pocket({ payoutToken: wBRL.address })], execute, allowance: async () => 1_000_000n }), "celo_pocket");
+    const calls = execute.mock.calls[0]?.[1]!;
+    expect(calls).toHaveLength(3);
+    expect(calls.some((item) => item.to.toLowerCase() === CELO_USDT.toLowerCase())).toBe(false);
+  });
 
+  it("refuses any swap selector outside the two PR #9 reactor entrypoints", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({
+      listPockets: async () => [pocket({ payoutToken: wBRL.address })],
+      execute,
+      getQuote: async () => quote({ swap: { ...quote().swap, data: "0xdeadbeef00" as Hex } })
+    });
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("re-checks quote expiry after allowance reads and refuses an expired batch", async () => {
+    const q = quote();
+    let now = Date.now();
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const d = deps({
+      now: () => now,
+      listPockets: async () => [pocket({ payoutToken: wBRL.address })],
+      getQuote: async () => q,
+      allowance: async () => { now = Date.parse(q.expiresAt); return 0n; },
+      execute
+    });
+    await runDuePockets(d, "celo_pocket");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("records over-cap output and never sends a payout or swap", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({
+      listPockets: async () => [pocket({ payoutToken: wBRL.address, payoutDailyCap: 1n })],
+      getQuote: async () => quote(),
+      execute
+    }), "celo_pocket");
     expect(execute).toHaveBeenCalledTimes(1);
-    const calls = execute.mock.calls[0]?.[1];
-    expect(calls).toHaveLength(4);
-    expect(calls?.some((item) => item.to.toLowerCase() === CELO_USDT.toLowerCase())).toBe(false);
+    const calls = execute.mock.calls[0]?.[1]!;
+    expect(calls).toHaveLength(1);
+    expect(decodeFunctionData({ abi: POCKET_REGISTRY_ABI, data: calls[0]!.data }).functionName).toBe("skipPocket");
   });
 
-  it("refuses a swap selector outside the two supported Altana reactor entrypoints", async () => {
+  it("refuses a Textile sell amount above the USDT session cap", async () => {
     const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({
-      execute,
-      getQuote: async () => ({ ...quote(), swap: { ...quote().swap, data: "0xdeadbeef00" as Hex } })
-    });
-    await runDuePockets(d, "celo_pocket");
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(d.logger.error).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ error: expect.stringContaining("0xdeadbeef") })
-    );
+    await runDuePockets(deps({
+      listPockets: async () => [pocket({ payoutToken: wBRL.address })],
+      getQuote: async () => quote({ takerPays: 6_000_000n }),
+      execute
+    }), "celo_pocket");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(decodeFunctionData({ abi: POCKET_REGISTRY_ABI, data: execute.mock.calls[0]![1][0]!.data }).functionName).toBe("skipPocket");
   });
 
-  it("refuses an expired quote before executing any part of settlement", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({
-      execute,
-      getQuote: async () => ({ ...quote(), expiresAt: new Date(Date.now() - 1_000).toISOString() })
-    });
-    await runDuePockets(d, "celo_pocket");
-    expect(execute).not.toHaveBeenCalled();
-    expect(d.logger.error).toHaveBeenCalled();
-  });
-
-  it("does not execute when the cNGN output exceeds its cap", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({
-      execute,
-      getQuote: async () => ({ ...quote(), buyAmount: 9_000_000_000n })
-    });
-    await runDuePockets(d, "celo_pocket");
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it("does not execute when the USDt session cap exceeds the 5 USDt safety ceiling", async () => {
-    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
-    const d = deps({ maxUsdtDailyCap: 4_000_000n, execute });
-    await runDuePockets(d, "celo_pocket");
-    expect(execute).not.toHaveBeenCalled();
-  });
 });

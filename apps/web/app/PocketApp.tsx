@@ -20,7 +20,6 @@ import {
   type Hex
 } from "viem";
 import { celo } from "viem/chains";
-import { verifyTx } from "@celo/attribution-tags";
 import { generatePrivateKey } from "viem/accounts";
 import {
   buildPocketSessionPolicy,
@@ -28,13 +27,16 @@ import {
   CELOSCAN_TX,
   CELO_RPC_DEFAULT,
   CELO_USDT,
-  CNGN,
+  ALTANA_SPEND_INFOS_ABI,
   ERC20_ABI,
+  POCKET_CURRENCIES,
   POCKET_CREATED_EVENT,
   POCKET_PAID_EVENT,
+  POCKET_SKIPPED_EVENT,
   POCKET_REGISTRY_ABI,
   sealToAgent,
-  TEXTILE_REACTOR
+  TEXTILE_REACTOR,
+  TEXTILE_VAULT_EXECUTOR
 } from "@pocket/core";
 
 type AppConfig = {
@@ -45,43 +47,33 @@ type AppConfig = {
   agentEncPublicKey: string;
 };
 type PocketView = {
-  id: bigint;
-  owner: Address;
-  recipient: Address;
-  amountUsdt: bigint;
-  period: bigint;
-  nextDue: bigint;
-  label: string;
-  paused: boolean;
-  deleted: boolean;
-  agent: Address;
-  sessionKeyId: Hex;
-  sessionExpiry: bigint;
-  usdtDailyCap: bigint;
-  cngnDailyCap: bigint;
+  id: bigint; owner: Address; recipient: Address; amountUsdt: bigint; payoutToken: Address;
+  period: bigint; nextDue: bigint; label: string; note: string; paused: boolean; closed: boolean; deleted: boolean;
+  agent: Address; sessionKeyId: Hex; sessionExpiry: bigint; usdtDailyCap: bigint; payoutDailyCap: bigint;
+  minOutPerUsdt: bigint; lastSkippedDue: bigint; lastSkippedReason: number;
 };
 type SessionMeta = {
-  publicKey: Hex;
-  keyId: Hex;
-  expiry: number;
-  usdtDailyCap: string;
-  cngnDailyCap: string;
-  encryptedSessionKey: Hex;
-  serializedSession: string;
+  publicKey: Hex; keyId: Hex; keyHash: Hex; expiry: number; usdtDailyCap: string;
+  payoutDailyCaps: Record<string, string>; payoutTokens: Address[];
+  encryptedSessionKey: Hex; serializedSession: string;
 };
-type PaymentRow = { pocketId: string; txHash: Hex; blockNumber: bigint; usdtPaid?: string; cngnReceived?: string; recipient?: Address; attributionPresent?: boolean };
+type PaymentRow = {
+  kind: "paid" | "skipped"; pocketId: string; txHash: Hex; blockNumber: bigint;
+  transactionIndex: number; logIndex: number;
+  payoutToken?: Address; usdtSpent?: bigint; amountOut?: bigint; timestamp?: bigint; reasonCode?: number;
+};
 type ProgressStep = { label: string; state: "pending" | "active" | "done" | "stopped" };
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
+const SESSION_SKIP_GRACE_SECONDS = 60 * 60;
 const POCKET_EVENTS_ABI = [POCKET_CREATED_EVENT] as const;
-const TRANSFER_EVENT_ABI = [{ type: "event", name: "Transfer", inputs: [{ name: "from", type: "address", indexed: true }, { name: "to", type: "address", indexed: true }, { name: "value", type: "uint256", indexed: false }] }] as const;
 function shortAddress(value: string): string { return value.length > 12 ? value.slice(0, 6) + "…" + value.slice(-4) : value; }
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
-  { label: "Every day", value: "86400" },
-  { label: "Every week", value: "604800" },
-  { label: "Every 30 days", value: "2592000" }
+  { label: "Once", value: "0" },
+  { label: "Weekly", value: "604800" },
+  { label: "Monthly", value: "2592000" }
 ];
 
 export default function PocketApp() {
@@ -90,7 +82,8 @@ export default function PocketApp() {
   const [wallet, setWallet] = useState<any>(null);
   const [usdtBalance, setUsdtBalance] = useState("—");
   const [usdtDecimals, setUsdtDecimals] = useState(6);
-  const [cngnDecimals, setCngnDecimals] = useState(18);
+  const [spendMeter, setSpendMeter] = useState<{ used: bigint; cap: bigint } | null>(null);
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
   const [pockets, setPockets] = useState<PocketView[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null);
@@ -100,13 +93,18 @@ export default function PocketApp() {
   const [error, setError] = useState("");
 
   const [recipient, setRecipient] = useState("");
-  const [amount, setAmount] = useState("1");
+  const [amount, setAmount] = useState("");
   const [label, setLabel] = useState("Weekly support");
   const [period, setPeriod] = useState("604800");
+  const [payoutToken, setPayoutToken] = useState<Address>(POCKET_CURRENCIES[1]!.address);
+  const [payoutCap, setPayoutCap] = useState("");
+  const [minRate, setMinRate] = useState("");
+  const [liveRate, setLiveRate] = useState<string | null>(null);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [receiverNote, setReceiverNote] = useState("");
   const [firstDue, setFirstDue] = useState(new Date(Date.now() + 60_000).toISOString().slice(0, 16));
 
   const [usdtCap, setUsdtCap] = useState("5");
-  const [cngnCap, setCngnCap] = useState("");
   const [expiryDays, setExpiryDays] = useState("30");
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -114,6 +112,10 @@ export default function PocketApp() {
   const [editAmount, setEditAmount] = useState("");
   const [editLabel, setEditLabel] = useState("");
   const [editPeriod, setEditPeriod] = useState("604800");
+  const [editPayoutToken, setEditPayoutToken] = useState<Address>(POCKET_CURRENCIES[1]!.address);
+  const [editPayoutCap, setEditPayoutCap] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editMinRate, setEditMinRate] = useState("0");
   const [editDue, setEditDue] = useState("");
 
   const publicClient = useMemo(() => createPublicClient({
@@ -134,6 +136,36 @@ export default function PocketApp() {
       .then((data: AppConfig) => setConfig(data))
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
+
+  useEffect(() => {
+    const currency = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase());
+    if (!currency || currency.isUsdt) {
+      setLiveRate(null);
+      setRateLoading(false);
+      setMinRate("");
+      return;
+    }
+    let cancelled = false;
+    setRateLoading(true);
+    setLiveRate(null);
+    fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("No live Textile rate is available for " + currency.symbol + ".");
+        return await response.json() as { bid: string };
+      })
+      .then(({ bid }) => {
+        if (cancelled) return;
+        const live = parseUnits(bid, 18);
+        const floor = live * 98n / 100n;
+        setLiveRate(bid);
+        setMinRate(formatUnits(floor, 18));
+      })
+      .catch(() => {
+        if (!cancelled) { setLiveRate(null); setMinRate(""); }
+      })
+      .finally(() => { if (!cancelled) setRateLoading(false); });
+    return () => { cancelled = true; };
+  }, [payoutToken]);
 
   const beginProgress = (title: string, labels: string[]) => setProgress({ title, steps: labels.map((label, index) => ({ label, state: index === 0 ? "active" : "pending" })) });
   const advanceProgress = (index: number) => setProgress((current) => current ? ({ ...current, steps: current.steps.map((step, i) => ({ ...step, state: i < index ? "done" : i === index ? "active" : "pending" })) }) : current);
@@ -184,22 +216,19 @@ export default function PocketApp() {
   const refresh = useCallback(async () => {
     if (!wallet || !registryAddress) return;
     try {
-      const [balance, tokenDecimals, cngnTokenDecimals, count, latest] = await Promise.all([
+      const [balance, tokenDecimals, count, latest] = await Promise.all([
         publicClient.readContract({
           address: CELO_USDT, abi: ERC20_ABI, functionName: "balanceOf", args: [wallet.address]
         }),
         publicClient.readContract({ address: CELO_USDT, abi: ERC20_ABI, functionName: "decimals" }),
-        publicClient.readContract({ address: CNGN, abi: ERC20_ABI, functionName: "decimals" }),
         publicClient.readContract({ address: registryAddress, abi: POCKET_REGISTRY_ABI, functionName: "pocketCount" }),
         publicClient.getBlockNumber()
       ]);
       setUsdtDecimals(Number(tokenDecimals));
-      setCngnDecimals(Number(cngnTokenDecimals));
       setUsdtBalance(formatUnits(balance, Number(tokenDecimals)));
 
       const own: PocketView[] = [];
-      const start = count > 100n ? count - 99n : 1n;
-      for (let id = start; id <= count; id += 1n) {
+      for (let id = 1n; id <= count; id += 1n) {
         const record = await publicClient.readContract({
           address: registryAddress,
           abi: POCKET_REGISTRY_ABI,
@@ -211,62 +240,49 @@ export default function PocketApp() {
         }
       }
       setPockets(own.reverse());
-
-      const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
-      const logs = await publicClient.getLogs({
-        address: registryAddress,
-        event: POCKET_PAID_EVENT,
-        fromBlock,
-        toBlock: latest
-      });
-      const ownIds = new Set(own.map((p) => p.id.toString()));
-      const rows = logs
-        .filter((entry) => ownIds.has(String(entry.args.pocketId)))
-        .map((entry) => ({ pocketId: String(entry.args.pocketId), txHash: entry.transactionHash as Hex, blockNumber: entry.blockNumber }))
-        .reverse().slice(0, 20);
-      const receiptRows = await Promise.all(rows.map(async (row): Promise<PaymentRow> => {
-        let usdtPaid: string | undefined, cngnReceived: string | undefined, recipient: Address | undefined, attributionPresent: boolean | undefined;
-        let usdtOutgoing = 0n, usdtIncoming = 0n;
-        const cngnOutgoing = new Map<string, { address: Address; amount: bigint }>();
-        try {
-          const receipt = await publicClient.getTransactionReceipt({ hash: row.txHash });
-          for (const log of receipt.logs) {
-            const token = log.address.toLowerCase();
-            if (token !== CELO_USDT.toLowerCase() && token !== CNGN.toLowerCase()) continue;
-            try {
-              const transfer = decodeEventLog({ abi: TRANSFER_EVENT_ABI, data: log.data, topics: log.topics });
-              const from = transfer.args.from.toLowerCase(), to = transfer.args.to.toLowerCase();
-              if (token === CELO_USDT.toLowerCase() && transfer.args.value > 0n) {
-                if (from === wallet.address.toLowerCase() && to !== wallet.address.toLowerCase()) usdtOutgoing += transfer.args.value;
-                if (to === wallet.address.toLowerCase() && from !== wallet.address.toLowerCase()) usdtIncoming += transfer.args.value;
-              }
-              if (token === CNGN.toLowerCase() && from === wallet.address.toLowerCase() && to !== wallet.address.toLowerCase() && transfer.args.value > 0n) {
-                const previous = cngnOutgoing.get(to);
-                cngnOutgoing.set(to, { address: transfer.args.to, amount: (previous?.amount ?? 0n) + transfer.args.value });
-              }
-            } catch { /* Ignore non-ERC20 receipt logs. */ }
-          }
-          const netUsdt = usdtOutgoing - usdtIncoming;
-          if (netUsdt > 0n) usdtPaid = formatUnits(netUsdt, Number(tokenDecimals));
-          if (cngnOutgoing.size > 0) {
-            const totalCngn = [...cngnOutgoing.values()].reduce((sum, transfer) => sum + transfer.amount, 0n);
-            cngnReceived = formatUnits(totalCngn, Number(cngnTokenDecimals));
-            if (cngnOutgoing.size === 1) recipient = [...cngnOutgoing.values()][0]?.address;
-          }
-        } catch { /* Keep the Celo receipt link if data is temporarily unavailable. */ }
-        if (config?.attributionTag) {
-          try {
-            const result = await verifyTx({ client: publicClient as unknown as Parameters<typeof verifyTx>[0]["client"], hash: row.txHash });
-            if (result && Array.isArray(result.codes)) attributionPresent = result.codes.includes(config.attributionTag);
-          } catch { /* Hide attribution when verification is unavailable. */ }
+      try {
+        const ownIds = new Set(own.map((p) => p.id.toString()));
+        const paidRows: PaymentRow[] = [], skippedRows: PaymentRow[] = [];
+        let end = latest;
+        while (end >= 0n) {
+          const start = end > 4_999n ? end - 4_999n : 0n;
+          const [paidLogs, skippedLogs] = await Promise.all([
+            publicClient.getLogs({ address: registryAddress, event: POCKET_PAID_EVENT, fromBlock: start, toBlock: end }),
+            publicClient.getLogs({ address: registryAddress, event: POCKET_SKIPPED_EVENT, fromBlock: start, toBlock: end })
+          ]);
+          for (const entry of paidLogs) if (ownIds.has(String(entry.args.pocketId))) paidRows.push({
+            kind: "paid", pocketId: String(entry.args.pocketId), txHash: entry.transactionHash as Hex, blockNumber: entry.blockNumber,
+            transactionIndex: Number(entry.transactionIndex), logIndex: Number(entry.logIndex),
+            payoutToken: entry.args.payoutToken, usdtSpent: entry.args.usdtSpent, amountOut: entry.args.amountOut, timestamp: entry.args.timestamp
+          });
+          for (const entry of skippedLogs) if (ownIds.has(String(entry.args.pocketId))) skippedRows.push({
+            kind: "skipped", pocketId: String(entry.args.pocketId), txHash: entry.transactionHash as Hex, blockNumber: entry.blockNumber,
+            transactionIndex: Number(entry.transactionIndex), logIndex: Number(entry.logIndex),
+            timestamp: entry.args.timestamp, reasonCode: Number(entry.args.reasonCode)
+          });
+          if (start === 0n) break;
+          end = start - 1n;
         }
-        return { ...row, ...(usdtPaid !== undefined ? { usdtPaid } : {}), ...(cngnReceived !== undefined ? { cngnReceived } : {}), ...(recipient !== undefined ? { recipient } : {}), ...(attributionPresent !== undefined ? { attributionPresent } : {}) };
-      }));
-      setPayments(receiptRows);
+        setPayments([...paidRows, ...skippedRows].sort((a,b) =>
+          Number(b.blockNumber-a.blockNumber) || b.transactionIndex-a.transactionIndex || b.logIndex-a.logIndex
+        ));
+        setHistoryUnavailable(false);
+      } catch { setPayments([]); setHistoryUnavailable(true); }
+
+      if (sessionMeta?.keyHash) {
+        try {
+          const infos = await publicClient.readContract({
+            address: wallet.address, abi: ALTANA_SPEND_INFOS_ABI, functionName: "spendInfos", args: [sessionMeta.keyHash]
+          });
+          const today = Math.floor(Date.now() / 86_400_000) * 86_400;
+          const usdtInfo = infos.find((item) => item.token.toLowerCase() === CELO_USDT.toLowerCase() && Number(item.period) === 2 && Number(item.current) === today);
+          setSpendMeter({ used: usdtInfo?.currentSpent ?? 0n, cap: usdtInfo?.limit ?? BigInt(sessionMeta.usdtDailyCap) });
+        } catch { setSpendMeter(null); }
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [wallet, registryAddress, publicClient, config?.attributionTag]);
+  }, [wallet, registryAddress, publicClient, config?.attributionTag, sessionMeta?.keyHash, sessionMeta?.usdtDailyCap]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -315,18 +331,29 @@ export default function PocketApp() {
       const { registry } = requireWriteSetup();
       if (!isAddress(recipient)) throw new Error("Enter a valid Celo recipient wallet address.");
       if (!label.trim()) throw new Error("Add a name for this pocket.");
+      const currency = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase());
+      if (!currency) throw new Error("Choose a currency from the verified list.");
+      if (receiverNote.length > 80) throw new Error("The public note must be 80 characters or fewer.");
       const amountRaw = parseUnits(amount, usdtDecimals);
+      if (!amount.trim()) throw new Error("Enter the USDT amount for this pocket.");
+      if (!payoutCap.trim()) throw new Error("Enter the daily payout cap in the receiver currency.");
+      const payoutCapRaw = parseUnits(payoutCap, currency.decimals);
+      const floorRaw = minRate.trim() ? parseUnits(minRate, 18) : 0n;
       const due = BigInt(Math.floor(new Date(firstDue).getTime() / 1000));
       if (amountRaw <= 0n || due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Amount and due date must be in the future.");
-      if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each default pocket at or below 5 USDt.");
-      const attachSession = Boolean(sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession && sessionMeta.expiry > Math.floor(Date.now() / 1000));
+      if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket at or below 5 USDT.");
+      if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
+      const alreadyGrantedCap = pockets
+        .filter((p) => !p.deleted && !p.closed && p.payoutToken.toLowerCase() === payoutToken.toLowerCase())
+        .reduce((total, p) => total + p.payoutDailyCap, 0n);
+      const attachSession = Boolean(sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession && sessionMeta.expiry > Math.floor(Date.now() / 1000) && sessionMeta.payoutTokens?.some((token) => token.toLowerCase() === payoutToken.toLowerCase()) && BigInt(sessionMeta.payoutDailyCaps?.[payoutToken.toLowerCase()] ?? "0") >= alreadyGrantedCap + payoutCapRaw);
       beginProgress("Create pocket", ["Saving pocket to Celo", "Confirming pocket receipt", ...(attachSession ? ["Attaching session to pocket"] : [])]);
       const createHash = await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "createPocket",
-          args: [recipient as Address, amountRaw, BigInt(period), due, label.trim()]
+          args: [recipient as Address, amountRaw, payoutToken, payoutCapRaw, BigInt(period), due, label.trim(), receiverNote.trim(), floorRaw]
         }),
         value: 0n
       }]);
@@ -360,9 +387,9 @@ export default function PocketApp() {
               createdId,
               wallet.address as Address,
               sessionMeta.keyId,
-              BigInt(sessionMeta.expiry),
+              BigInt(sessionMeta.expiry - SESSION_SKIP_GRACE_SECONDS),
               BigInt(sessionMeta.usdtDailyCap),
-              BigInt(sessionMeta.cngnDailyCap),
+              payoutCapRaw,
               sessionMeta.encryptedSessionKey,
               sessionMeta.serializedSession
             ]
@@ -370,7 +397,8 @@ export default function PocketApp() {
           value: 0n
         }]);
       }
-      setRecipient(""); setAmount("1"); setLabel("Weekly support");
+      setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
+      if (!attachSession && sessionMeta) setMessage("Pocket saved. Revoke the current key and grant a new session to include this currency and payout cap.");
       await refresh();
       finishProgress();
     } catch (reason) {
@@ -385,6 +413,11 @@ export default function PocketApp() {
     setEditAmount(formatUnits(p.amountUsdt, usdtDecimals));
     setEditLabel(p.label);
     setEditPeriod(p.period.toString());
+    setEditPayoutToken(p.payoutToken);
+    const selected = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === p.payoutToken.toLowerCase());
+    setEditPayoutCap(formatUnits(p.payoutDailyCap, selected?.decimals ?? 18));
+    setEditNote(p.note);
+    setEditMinRate(formatUnits(p.minOutPerUsdt, 18));
     setEditDue(new Date(Number(p.nextDue) * 1000).toISOString().slice(0, 16));
   }
 
@@ -393,21 +426,41 @@ export default function PocketApp() {
     try {
       const { registry } = requireWriteSetup();
       if (!isAddress(editRecipient)) throw new Error("Enter a valid recipient address.");
+      if (!editLabel.trim()) throw new Error("Add a name for this pocket.");
+      if (editNote.length > 80) throw new Error("The public note must be 80 characters or fewer.");
+      const currency = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === editPayoutToken.toLowerCase());
+      if (!currency) throw new Error("Choose a currency from the verified list.");
+      const amountRaw = parseUnits(editAmount, usdtDecimals);
+      const payoutCapRaw = parseUnits(editPayoutCap, currency.decimals);
+      if (amountRaw <= 0n || amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket between 0 and 5 USDT.");
+      if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const due = BigInt(Math.floor(new Date(editDue).getTime() / 1000));
+      if (due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("The next due date must be in the future.");
       await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "updatePocket",
-          args: [id, editRecipient as Address, parseUnits(editAmount, usdtDecimals), BigInt(editPeriod), due, editLabel.trim()]
+          args: [id, editRecipient as Address, amountRaw, editPayoutToken, payoutCapRaw, BigInt(editPeriod), due, editLabel.trim(), editNote.trim()]
         }),
         value: 0n
       }]);
+      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [id, parseUnits(editMinRate || "0", 18)] }), value: 0n }]);
       setEditingId(null);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
+  }
+
+  async function lowerFloor(p: PocketView) {
+    setBusy(true); setError("");
+    try {
+      const { registry } = requireWriteSetup();
+      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [p.id, p.minOutPerUsdt * 98n / 100n] }), value: 0n }]);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
   }
 
   async function setPaused(p: PocketView, paused: boolean) {
@@ -446,19 +499,22 @@ export default function PocketApp() {
     try {
       const { client, activeWallet, registry } = requireWriteSetup();
       const ownPockets = await listOwnPockets();
-      if (!ownPockets.some((p) => !p.deleted)) throw new Error("Create at least one pocket before granting the agent.");
+      if (!ownPockets.some((p) => !p.deleted && !p.closed)) throw new Error("Create at least one active pocket before granting the agent.");
       const secret = generatePrivateKey();
       const sessionSigner = signerFromPrivateKey(secret);
       const expiry = Math.floor(Date.now() / 1000) + Number(expiryDays) * 86_400;
+      const registryPaymentCutoff = expiry - SESSION_SKIP_GRACE_SECONDS;
+      if (registryPaymentCutoff <= Math.floor(Date.now() / 1000)) throw new Error("Choose a session expiry more than one hour from now.");
       const usdtLimit = parseUnits(usdtCap, usdtDecimals);
-      const cngnLimit = parseUnits(cngnCap, cngnDecimals);
-      if (usdtLimit <= 0n || usdtLimit > parseUnits("5", usdtDecimals)) throw new Error("The USDt daily cap must be above zero and no more than 5.");
-      if (cngnLimit <= 0n) throw new Error("Set a positive cNGN daily cap.");
-      const permissions = buildPocketSessionPolicy({
-        registryAddress: registry,
-        usdtDailyCap: usdtLimit,
-        cngnDailyCap: cngnLimit
-      });
+      if (usdtLimit <= 0n || usdtLimit > parseUnits("5", usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than 5.");
+      const activePockets = ownPockets.filter((p) => !p.deleted && !p.closed);
+      const payoutTokens = [...new Set(activePockets.map((p) => p.payoutToken))];
+      const payoutDailyCaps: Record<string, bigint> = {};
+      for (const p of activePockets) {
+        const key = p.payoutToken.toLowerCase();
+        payoutDailyCaps[key] = (payoutDailyCaps[key] ?? 0n) + p.payoutDailyCap;
+      }
+      const permissions = buildPocketSessionPolicy({ registryAddress: registry, usdtDailyCap: usdtLimit, payoutTokens, payoutDailyCaps });
       beginProgress("Grant session key", ["Granting session key", "Approving Textile signature checks", "Saving session limits to Celo"]);
       const session = await client.grantSession({
         wallet: activeWallet,
@@ -480,7 +536,9 @@ export default function PocketApp() {
         keyId: session.keyId,
         expiry,
         usdtDailyCap: usdtLimit.toString(),
-        cngnDailyCap: cngnLimit.toString(),
+        keyHash: session.keyHash,
+        payoutDailyCaps: Object.fromEntries(Object.entries(payoutDailyCaps).map(([key, value]) => [key, value.toString()])),
+        payoutTokens,
         encryptedSessionKey,
         serializedSession
       };
@@ -499,24 +557,18 @@ export default function PocketApp() {
       advanceProgress(1);
       // The Textile reactor must be approved to call the wallet's ERC-1271
       // isValidSignature for this session key during settlement verification.
-      const checkerApproval = await client.approveSignatureChecker({
-        wallet: activeWallet,
-        signer: activeWallet.signer,
-        session,
-        checker: TEXTILE_REACTOR,
-        chainId: CELO_CHAIN_ID
-      });
-      if (checkerApproval.status !== "CONFIRMED") {
-        throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
+      if (payoutTokens.some((token) => token.toLowerCase() !== CELO_USDT.toLowerCase())) {
+        const checkerApproval = await client.approveSignatureChecker({ wallet: activeWallet, signer: activeWallet.signer, session, checker: TEXTILE_REACTOR, chainId: CELO_CHAIN_ID });
+        if (checkerApproval.status !== "CONFIRMED") throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
       }
 
       advanceProgress(2);
-      const calls = ownPockets.filter((p) => !p.deleted).map((p) => ({
+      const calls = ownPockets.filter((p) => !p.deleted && !p.closed).map((p) => ({
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "approveAgent",
-          args: [p.id, activeWallet.address as Address, session.keyId, BigInt(expiry), usdtLimit, cngnLimit, encryptedSessionKey, serializedSession]
+          args: [p.id, activeWallet.address as Address, session.keyId, BigInt(registryPaymentCutoff), usdtLimit, p.payoutDailyCap, encryptedSessionKey, serializedSession]
         }),
         value: 0n
       }));
@@ -571,8 +623,8 @@ export default function PocketApp() {
   }
 
   const dateText = (timestamp: bigint) => new Date(Number(timestamp) * 1000).toLocaleString();
-  const periodText = (seconds: bigint) => seconds === 86_400n ? "Every day" : seconds === 604_800n ? "Every week" : seconds === 2_592_000n ? "Every 30 days" : "Every " + (Number(seconds) / 86_400) + " days";
-  const pocketStatus = (p: PocketView) => p.paused ? "Paused" : p.sessionExpiry > 0n && p.sessionExpiry <= BigInt(Math.floor(Date.now() / 1000)) ? "Session expired" : p.agent === ZERO ? "Session not granted" : "Active";
+  const periodText = (seconds: bigint) => seconds === 0n ? "Once" : seconds === 604_800n ? "Weekly" : seconds === 2_592_000n ? "Monthly" : "Every " + (Number(seconds) / 86_400) + " days";
+  const pocketStatus = (p: PocketView) => p.closed ? "Completed" : p.paused ? "Paused" : p.sessionExpiry > 0n && p.sessionExpiry <= BigInt(Math.floor(Date.now() / 1000)) ? "Session expired" : p.agent === ZERO ? "Session not granted" : "Active";
   const sessionIsExpired = Boolean(sessionMeta && sessionMeta.expiry <= Math.floor(Date.now() / 1000));
 
   return (
@@ -625,30 +677,42 @@ export default function PocketApp() {
           <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={64} placeholder="Family upkeep" />
           <label>Recipient wallet</label>
           <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..." />
+          <label>Receiver gets</label>
+          <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(""); }}>
+            {POCKET_CURRENCIES.filter((item)=>!item.isUsdt).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
+            <option value={CELO_USDT}>US Dollar (USDT)</option>
+          </select>
+          <p className="small">MiniPay shows dollars only.</p>
           <div className="row">
-            <div><label>USDt amount</label><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></div>
+            <div><label>USDT amount</label><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></div>
             <div><label>Repeat</label><select value={period} onChange={(e) => setPeriod(e.target.value)}>{PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</select></div>
           </div>
+          <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===payoutToken.toLowerCase())?.symbol})</label>
+          <input value={payoutCap} onChange={(e)=>setPayoutCap(e.target.value)} inputMode="decimal"/>
+          <label>Minimum rate floor (local currency per USDT)</label><input value={minRate} onChange={(e) => setMinRate(e.target.value)} inputMode="decimal" placeholder="0 = off"/>
+           <p className="small">{rateLoading ? "Fetching live Textile rate…" : liveRate ? "Live Textile rate: " + liveRate + " " + (POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.symbol ?? "") + " per USDT. Floor prefilled 2% below." : "No live Textile bid available. Set a floor manually or leave 0 (off)."}</p>
+          <label>Note to receiver</label><textarea maxLength={80} value={receiverNote} onChange={(e)=>setReceiverNote(e.target.value)} placeholder="A short public message"/>
+          <p className="small">Public on the blockchain. {receiverNote.length}/80</p>
           <label>First payment date and time</label>
           <input type="datetime-local" value={firstDue} onChange={(e) => setFirstDue(e.target.value)} />
-          <div className="notice">USDt pockets are capped at 5 per payment by default. Textile FX mainnet quotes have a $1 minimum. Keep the payment below your session cap so there is room for relay fees.</div>
-          <button disabled={busy || !wallet || !readyForWrites} onClick={() => void createPocket()}>Create pocket</button>
+          <div className="notice">USDT payouts transfer directly. Other currencies use a Textile quote. Keep the payment below your session cap so there is room for relay fees.</div>
+          <button disabled={busy || rateLoading || !wallet || !readyForWrites} onClick={() => void createPocket()}>Create pocket</button>
         </section>
 
         <section className="panel session-panel">
           <div className="section-heading"><div><h2>Session key</h2><p className="small">A limited key for the Pocket agent.</p></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
-          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Daily cNGN cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.cngnDailyCap), cngnDecimals)} cNGN</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>cNGN · transfer</span><code>{shortAddress(CNGN)}</code></div><div className="contract-item"><span>PocketRegistry · recordSwap / markPaid</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
-            <div><label>USDt daily cap (max 5)</label><input value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)} inputMode="decimal" /></div>
-            <div><label>cNGN daily cap</label><input value={cngnCap} onChange={(e) => setCngnCap(e.target.value)} inputMode="decimal" placeholder="Set limit" /></div>
+          {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Session spend</span><strong className="mono">{spendMeter ? "Today: $" + formatUnits(spendMeter.used, usdtDecimals) + " of $" + formatUnits(spendMeter.cap, usdtDecimals) + " used, expires " + new Date(sessionMeta.expiry * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Spend unavailable"}</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>Textile vault executor · fill</span><code>{shortAddress(TEXTILE_VAULT_EXECUTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>Payout tokens · transfer</span><code>{(sessionMeta.payoutTokens ?? []).map((token)=>shortAddress(token)).join(", ") || "Regrant session for v2 token permissions"}</code></div><div className="contract-item"><span>PocketRegistry · markPaid / skipPocket</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
+            <div><label>USDT daily cap (max 5)</label><input value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)} inputMode="decimal" /></div>
+            <div><label>Payout token limits</label><span className="small">Each active pocket's token cap is included in the session.</span></div>
           </div>
           <label>Key expires in days</label>
           <select value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)}>
             <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option>
           </select>
           <div className="notice">
-            Allowed calls are method-limited: Textile order execution, USDt approval, cNGN transfer, and PocketRegistry swap/payment records. Pocket also asks Altana to let the Textile reactor verify this session's ERC-1271 signatures. Owner-only PocketRegistry actions are not allowed. The USDt cap includes Altana relay fees. The session key is encrypted to the agent and is never shown or stored here.
+            Allowed calls are method-limited: transfer only on selected payout tokens, USDT approval to Textile for conversions, and PocketRegistry payment/skip marks. Owner-only edits are not allowed. The USDT cap includes Altana relay fees. The session key is encrypted to the agent and is never shown or stored here.
           </div>
-          <p className="meta">FX: {TEXTILE_REACTOR}<br />USDt: {CELO_USDT}<br />cNGN: {CNGN}<br />Registry: {config?.registryAddress || "Not deployed"}</p>
+          <p className="meta">FX: {TEXTILE_REACTOR}<br />USDT: {CELO_USDT}<br />Nine local payout corridors<br />Registry: {config?.registryAddress || "Not deployed"}</p>
               <button disabled={busy || !wallet || !readyForWrites || pockets.length === 0} onClick={() => void grantSession()}>Grant session key</button>
             </>}
         </section>
@@ -660,12 +724,17 @@ export default function PocketApp() {
         {pockets.filter((p) => !p.deleted).map((p) => (
           <div className="pocket-card" key={p.id.toString()}>
             <div className="pocket-top"><div className="pocket-title"><span className="eyebrow">POCKET <code>#{p.id.toString()}</code></span><h3>{p.label}</h3></div><span className={"status-pill " + (pocketStatus(p) === "Paused" ? "paused" : pocketStatus(p) === "Active" ? "active" : pocketStatus(p) === "Session expired" ? "expired" : "unassigned")}>{pocketStatus(p)}</span></div>
-            <div className="pocket-amount"><span>Paid each cycle</span><strong className="mono">{formatUnits(p.amountUsdt, usdtDecimals)} USDT</strong></div>
-            <div className="pocket-facts"><div><span>Recipient</span><code>{shortAddress(p.recipient)}</code></div><div><span>Frequency</span><strong>{periodText(p.period)}</strong></div><div><span>Next payout</span><strong>{dateText(p.nextDue)}</strong></div></div>
+            <div className="pocket-amount"><span>Sender spends</span><strong className="mono">{formatUnits(p.amountUsdt, usdtDecimals)} USDT</strong></div>
+            <div className="pocket-facts"><div><span>Receiver gets</span><strong>{POCKET_CURRENCIES.find((currency)=>currency.address.toLowerCase()===p.payoutToken.toLowerCase())?.symbol ?? "Unknown"}</strong></div><div><span>Recipient</span><code>{shortAddress(p.recipient)}</code></div><div><span>Frequency</span><strong>{periodText(p.period)}</strong></div><div><span>Next payout</span><strong>{p.closed?"Completed":dateText(p.nextDue)}</strong></div><div><span>Note</span><strong>{p.note || "—"}</strong></div><div><span>Rate floor</span><strong>{p.minOutPerUsdt>0n?formatUnits(p.minOutPerUsdt,18)+" / USDT":"Off"}</strong></div></div>
+            {p.minOutPerUsdt>0n && p.lastSkippedDue===p.nextDue && p.lastSkippedReason===1 && <div className="notice">Held: rate below your floor. <button className="secondary" disabled={busy || !readyForWrites} onClick={()=>void lowerFloor(p)}>Lower floor</button></div>}
             {editingId === p.id.toString() ? (
               <div>
                 <label>Name</label><input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
                 <label>Recipient</label><input value={editRecipient} onChange={(e) => setEditRecipient(e.target.value)} />
+                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap("");}}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
+                <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===editPayoutToken.toLowerCase())?.symbol})</label><input value={editPayoutCap} onChange={(e)=>setEditPayoutCap(e.target.value)} inputMode="decimal"/>
+                <label>Note to receiver</label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/><p className="small">Public on the blockchain.</p>
+                <label>Minimum rate floor (0 = off)</label><input value={editMinRate} onChange={(e)=>setEditMinRate(e.target.value)} inputMode="decimal"/>
                 <div className="row">
                   <div><label>USDt amount</label><input value={editAmount} onChange={(e) => setEditAmount(e.target.value)} /></div>
                   <div><label>Repeat</label><select value={editPeriod} onChange={(e) => setEditPeriod(e.target.value)}>{PERIODS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}</select></div>
@@ -679,7 +748,7 @@ export default function PocketApp() {
             ) : (
               <div className="actions">
                 <button className="secondary" disabled={busy || !readyForWrites} onClick={() => beginEdit(p)}>Edit</button>
-                <button className="secondary" disabled={busy || !readyForWrites} onClick={() => void setPaused(p, !p.paused)}>{p.paused ? "Resume" : "Pause"}</button>
+                <button className="secondary" disabled={busy || !readyForWrites || p.minOutPerUsdt===0n} onClick={()=>void lowerFloor(p)}>Lower floor</button><button className="secondary" disabled={busy || !readyForWrites || p.closed} onClick={() => void setPaused(p, !p.paused)}>{p.paused ? "Resume" : "Pause"}</button>
                 <button className="danger" disabled={busy || !readyForWrites} onClick={() => void deletePocket(p)}>Delete</button>
               </div>
             )}
@@ -690,22 +759,17 @@ export default function PocketApp() {
       <section className="panel how-panel"><h2>How it works</h2><div className="how-strip"><div className="how-step"><span>01</span><strong>Your wallet</strong><small>Funds stay with you</small></div><div className="how-arrow">→</div><div className="how-step"><span>02</span><strong>Altana session key</strong><small>With daily limits</small></div><div className="how-arrow">→</div><div className="how-step"><span>03</span><strong>Pocket agent</strong><small>ERC-8004 #10132</small></div><div className="how-arrow">→</div><div className="how-step"><span>04</span><strong>Textile FX swap</strong><small>USDT to cNGN</small></div><div className="how-arrow">→</div><div className="how-step"><span>05</span><strong>Recipient</strong><small>Gets cNGN</small></div></div></section>
 
       <section className="panel payments-panel">
-        <h2>Payments</h2>
-        <p className="small">Recent confirmed payments from PocketRegistry events. Explorer links use the transaction receipt, not a stored quote ID.</p>
-        {payments.length === 0 ? <p>No confirmed payments found in the last 50,000 blocks.</p> : (
-          <ul className="list">
-            {payments.map((payment) => (
-              <li className="payment-receipt" key={payment.txHash + payment.pocketId}><div className="receipt-top"><strong>Pocket <code>#{payment.pocketId}</code></strong><span className="small">Block <code>{payment.blockNumber.toString()}</code></span></div><div className="receipt-line">
-                {payment.usdtPaid !== undefined && <div><span>USDT paid</span><strong className="mono">{payment.usdtPaid} USDT</strong></div>}
-                {payment.cngnReceived !== undefined && <div><span>cNGN received</span><strong className="mono">{payment.cngnReceived} cNGN</strong></div>}
-                {payment.recipient !== undefined && <div><span>Recipient</span><code>{shortAddress(payment.recipient)}</code></div>}
-                {typeof payment.attributionPresent === "boolean" && <div><span>Attribution tag</span><strong>Present · {payment.attributionPresent ? "Yes" : "No"}</strong></div>}
-                <a className="receipt-link" href={CELOSCAN_TX + payment.txHash} target="_blank" rel="noreferrer">Celo tx ↗</a></div></li>
-            ))}
-          </ul>
-        )}
+        <h2>Activity</h2><p className="small">Payments and skips from PocketRegistry events, newest first.</p>
+        {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p>No payment or skip events found.</p>:
+          <ul className="list">{payments.map((item)=><li className="payment-receipt" key={item.txHash+item.pocketId+item.kind}>
+            <div className="receipt-top"><strong>{item.kind==="paid"?"Payment":"Skipped"} · Pocket <code>#{item.pocketId}</code></strong><span className="small">{item.timestamp===undefined?"Block "+item.blockNumber.toString():new Date(Number(item.timestamp)*1000).toLocaleString()}</span></div>
+            <div className="receipt-line">
+              {item.kind==="paid"?<><div><span>USDT spent</span><strong>{item.usdtSpent===undefined?"—":formatUnits(item.usdtSpent,usdtDecimals)+" USDT"}</strong></div><div><span>Amount out</span><strong>{item.amountOut===undefined?"—":formatUnits(item.amountOut,POCKET_CURRENCIES.find((x)=>x.address.toLowerCase()===item.payoutToken?.toLowerCase())?.decimals??18)+" "+(POCKET_CURRENCIES.find((x)=>x.address.toLowerCase()===item.payoutToken?.toLowerCase())?.symbol??"Token")}</strong></div><a className="receipt-link" href={"/r/"+item.pocketId+"/"+item.txHash}>Receipt ↗</a></>:<div><span>Reason</span><strong>{({1:"rate_below_floor",2:"over_cap",3:"no_quote",4:"session_expired"} as Record<number,string>)[item.reasonCode??0]??"unknown"}</strong></div>}
+              <a className="receipt-link" href={CELOSCAN_TX+item.txHash} target="_blank" rel="noreferrer">Celoscan ↗</a>
+            </div>
+          </li>)}</ul>}
       </section>
-      <p className="small">Pocket is an early mainnet build. Check your caps, session expiry, recipient address, and quote before relying on a scheduled payment.</p>
+      <p className="small">Checked about every 15 minutes. GitHub Actions may run late; overdue pockets remain due until paid.</p>
     </main>
   );
 }

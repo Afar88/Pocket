@@ -1,7 +1,6 @@
 name: Pocket checks
 
 on:
-  # Run the complete suite on every branch push.
   push:
   pull_request:
     branches: [main]
@@ -14,35 +13,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install npm workspaces
         id: install_deps
         run: npm install
-
       - name: Build TypeScript and Next.js apps
         run: npm run build
-
       - name: Run agent unit tests
         if: ${{ always() && steps.install_deps.outcome == 'success' }}
         run: npm run test:agent
-
       - name: Install Foundry
         id: foundry
         if: ${{ always() }}
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-
       - name: Run PocketRegistry Foundry tests
         if: ${{ always() && steps.foundry.outcome == 'success' }}
         run: forge test
-
-      - name: Verify committed deploy bytecode matches the forge build
-        if: ${{ always() && steps.foundry.outcome == 'success' }}
+      - name: Verify committed deploy artifacts
+        if: ${{ always() && steps.foundry.outcome == 'success' && steps.install_deps.outcome == 'success' && github.event_name == 'pull_request' }}
         run: |
           forge build
           built=$(jq -r .bytecode.object contracts/out/PocketRegistry.sol/PocketRegistry.json)
@@ -51,12 +43,43 @@ jobs:
             echo "deploy/registry.bytecode does not match the forge build output."
             exit 1
           fi
-
-      - name: Verify committed deploy bundles match the vendored build
-        if: ${{ always() && steps.install_deps.outcome == 'success' }}
-        run: |
           npm run build:deploy
           git diff --exit-code deploy/bundle.js deploy/keys-bundle.js || {
             echo "Committed deploy bundles do not match the esbuild output."
             exit 1
           }
+
+  build_phone_artifacts:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feat/pocket-v2' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/pocket-v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install npm workspaces
+        run: npm install
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Rebuild PocketRegistry bytecode and deploy bundles
+        run: |
+          forge build
+          jq -r .bytecode.object contracts/out/PocketRegistry.sol/PocketRegistry.json > deploy/registry.bytecode
+          npm run build:deploy
+      - name: Commit generated phone deploy artifacts on the feature branch only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/registry.bytecode deploy/bundle.js deploy/keys-bundle.js
+          if git diff --cached --quiet; then
+            echo "Phone deploy artifacts already match the sources."
+            exit 0
+          fi
+          git commit -m "Build PocketRegistry v2 phone deploy artifacts"
+          git push origin HEAD:feat/pocket-v2

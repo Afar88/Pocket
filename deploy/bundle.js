@@ -24237,7 +24237,7 @@ var MARKER_BYTES = ERC_8021_MARKER.length / 2 - 1;
 var ATTRIBUTION_TAG = "celo_35b1e46e453d";
 var CELO_CHAIN_ID = 42220;
 var CELO_CHAIN_HEX = "0xa4ec";
-var CELO_RPC = "https://celo-rpc.publicnode.com";
+var CELO_RPC = "https://forno.celo.org";
 var CELOSCAN = "https://celoscan.io";
 
 // deploy/app.js
