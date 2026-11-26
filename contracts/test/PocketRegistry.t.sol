@@ -37,7 +37,7 @@ contract PocketRegistryTest {
 
     function _create(uint64 period) private returns (uint256) {
         vm.prank(owner);
-        return registry.createPocket(recipient, 5_000_000, payoutToken, period, uint64(block.timestamp), "Family", "Public note", 0);
+        return registry.createPocket(recipient, 5_000_000, payoutToken, 5_000_000, period, uint64(block.timestamp), "Family", "Public note", 0);
     }
 
     function _approve(uint256 id) private {
@@ -51,6 +51,7 @@ contract PocketRegistryTest {
         require(pocket.owner == owner && pocket.recipient == recipient, "parties");
         require(pocket.amountUsdt == 5_000_000 && pocket.payoutToken == payoutToken, "amount and token");
         require(pocket.period == 7 days && pocket.nextDue == block.timestamp, "schedule");
+        require(pocket.payoutDailyCap == 5_000_000, "payout cap persisted at create");
         require(keccak256(bytes(pocket.note)) == keccak256(bytes("Public note")), "public note");
         require(address(registry).balance == 0, "registry must not hold funds");
     }
@@ -58,7 +59,7 @@ contract PocketRegistryTest {
     function testNoteCannotExceed80Bytes() public {
         _expectError("note too long");
         vm.prank(owner);
-        registry.createPocket(recipient, 1_000_000, payoutToken, 0, uint64(block.timestamp), "Once", string(new bytes(81)), 0);
+        registry.createPocket(recipient, 1_000_000, payoutToken, 1_000_000, 0, uint64(block.timestamp), "Once", string(new bytes(81)), 0);
     }
 
     function testNoteLimitCountsUnicodeCharactersNotUtf8Bytes() public {
@@ -69,7 +70,7 @@ contract PocketRegistryTest {
             multibyteNote[i * 3 + 2] = 0x8C;
         }
         vm.prank(owner);
-        uint256 id = registry.createPocket(recipient, 1_000_000, payoutToken, 0, uint64(block.timestamp), "Unicode", string(multibyteNote), 0);
+        uint256 id = registry.createPocket(recipient, 1_000_000, payoutToken, 1_000_000, 0, uint64(block.timestamp), "Unicode", string(multibyteNote), 0);
         require(bytes(registry.getPocket(id).note).length == 240, "all 80 characters stored");
     }
 
@@ -106,7 +107,7 @@ contract PocketRegistryTest {
 
     function testCannotMarkPaidBeforeDue() public {
         vm.prank(owner);
-        uint256 id = registry.createPocket(recipient, 1_000_000, payoutToken, 7 days, uint64(block.timestamp + 1 days), "Future", "", 0);
+        uint256 id = registry.createPocket(recipient, 1_000_000, payoutToken, 1_000_000, 7 days, uint64(block.timestamp + 1 days), "Future", "", 0);
         _approve(id);
         uint64 due = registry.getPocket(id).nextDue;
         _expectError("not due");
@@ -124,6 +125,18 @@ contract PocketRegistryTest {
         _expectError("stale period");
         vm.prank(agent);
         registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, originalDue, keccak256("overlap"));
+    }
+
+    function testChangingPayoutAssetOrCapClearsOldAgentGrant() public {
+        uint256 id = _create(7 days);
+        _approve(id);
+        vm.prank(owner);
+        registry.updatePocket(id, recipient, 5_000_000, address(0xBEEF), 9_000_000, 7 days, uint64(block.timestamp), "Family", "Public note");
+        PocketRegistry.Pocket memory changed = registry.getPocket(id);
+        require(changed.agent == address(0), "agent cleared");
+        require(changed.sessionKeyId == bytes32(0), "key cleared");
+        require(changed.usdtDailyCap == 0, "session cap cleared");
+        require(changed.payoutDailyCap == 9_000_000, "new payout cap stored");
     }
 
     function testOneOffClosesAndCannotPayTwice() public {

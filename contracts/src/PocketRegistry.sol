@@ -47,8 +47,8 @@ contract PocketRegistry {
     mapping(uint256 => LastPayment) private _lastPayments;
     mapping(bytes32 => bool) public usedTxRef;
 
-    event PocketCreated(uint256 indexed pocketId, address indexed owner, address indexed recipient, uint256 amountUsdt, address payoutToken, uint64 period, uint64 nextDue, string label, string note);
-    event PocketUpdated(uint256 indexed pocketId, address indexed recipient, uint256 amountUsdt, address payoutToken, uint64 period, uint64 nextDue, string label, string note);
+    event PocketCreated(uint256 indexed pocketId, address indexed owner, address indexed recipient, uint256 amountUsdt, address payoutToken, uint128 payoutDailyCap, uint64 period, uint64 nextDue, string label, string note);
+    event PocketUpdated(uint256 indexed pocketId, address indexed recipient, uint256 amountUsdt, address payoutToken, uint128 payoutDailyCap, uint64 period, uint64 nextDue, string label, string note);
     event PocketPaused(uint256 indexed pocketId, bool paused);
     event PocketDeleted(uint256 indexed pocketId);
     event AgentApproved(uint256 indexed pocketId, address indexed agent, bytes32 sessionKeyId, uint64 sessionExpiry, uint128 usdtDailyCap, uint128 payoutDailyCap);
@@ -73,10 +73,11 @@ contract PocketRegistry {
         _;
     }
 
-    function createPocket(address recipient, uint256 amountUsdt, address payoutToken, uint64 period, uint64 firstDue, string calldata label, string calldata note, uint128 minOutPerUsdt) external returns (uint256 pocketId) {
+    function createPocket(address recipient, uint256 amountUsdt, address payoutToken, uint128 payoutDailyCap, uint64 period, uint64 firstDue, string calldata label, string calldata note, uint128 minOutPerUsdt) external returns (uint256 pocketId) {
         require(recipient != address(0), "zero recipient");
         require(payoutToken != address(0), "zero payout token");
         require(amountUsdt > 0, "zero amount");
+        require(payoutDailyCap > 0, "zero payout cap");
         require(firstDue >= block.timestamp, "first due in past");
         require(bytes(label).length > 0 && bytes(label).length <= 64, "bad label");
         require(_utf8Length(bytes(note)) <= 80, "note too long");
@@ -98,35 +99,48 @@ contract PocketRegistry {
             sessionKeyId: bytes32(0),
             sessionExpiry: 0,
             usdtDailyCap: 0,
-            payoutDailyCap: 0,
+            payoutDailyCap: payoutDailyCap,
             minOutPerUsdt: minOutPerUsdt,
             lastSkippedDue: 0,
             lastSkippedReason: 0,
             encryptedSessionKey: "",
             serializedSession: ""
         });
-        emit PocketCreated(pocketId, msg.sender, recipient, amountUsdt, payoutToken, period, firstDue, label, note);
+        emit PocketCreated(pocketId, msg.sender, recipient, amountUsdt, payoutToken, payoutDailyCap, period, firstDue, label, note);
     }
 
-    function updatePocket(uint256 pocketId, address recipient, uint256 amountUsdt, address payoutToken, uint64 period, uint64 firstDue, string calldata label, string calldata note) external onlyOwner(pocketId) {
+    function updatePocket(uint256 pocketId, address recipient, uint256 amountUsdt, address payoutToken, uint128 payoutDailyCap, uint64 period, uint64 firstDue, string calldata label, string calldata note) external onlyOwner(pocketId) {
         Pocket storage pocket = _pockets[pocketId];
         require(!pocket.deleted, "pocket deleted");
         require(!pocket.closed, "pocket closed");
         require(recipient != address(0), "zero recipient");
         require(payoutToken != address(0), "zero payout token");
         require(amountUsdt > 0, "zero amount");
+        require(payoutDailyCap > 0, "zero payout cap");
         require(firstDue >= block.timestamp, "first due in past");
         require(bytes(label).length > 0 && bytes(label).length <= 64, "bad label");
         require(_utf8Length(bytes(note)) <= 80, "note too long");
 
+        // A changed payout asset or cap invalidates the previous Altana token permissions.
+        if (pocket.payoutToken != payoutToken || pocket.payoutDailyCap != payoutDailyCap) {
+            pocket.agent = address(0);
+            pocket.sessionKeyId = bytes32(0);
+            pocket.sessionExpiry = 0;
+            pocket.usdtDailyCap = 0;
+            pocket.encryptedSessionKey = "";
+            pocket.serializedSession = "";
+        }
         pocket.recipient = recipient;
         pocket.amountUsdt = amountUsdt;
         pocket.payoutToken = payoutToken;
+        pocket.payoutDailyCap = payoutDailyCap;
         pocket.period = period;
         pocket.nextDue = firstDue;
+        pocket.lastSkippedDue = 0;
+        pocket.lastSkippedReason = 0;
         pocket.label = label;
         pocket.note = note;
-        emit PocketUpdated(pocketId, recipient, amountUsdt, payoutToken, period, firstDue, label, note);
+        emit PocketUpdated(pocketId, recipient, amountUsdt, payoutToken, payoutDailyCap, period, firstDue, label, note);
     }
 
     /// @notice The rate floor can be changed independently from every other pocket field.
@@ -168,13 +182,12 @@ contract PocketRegistry {
             pocket.sessionKeyId = bytes32(0);
             pocket.sessionExpiry = 0;
             pocket.usdtDailyCap = 0;
-            pocket.payoutDailyCap = 0;
             pocket.encryptedSessionKey = "";
             pocket.serializedSession = "";
         } else {
             require(sessionKeyId != bytes32(0), "zero key id");
             require(sessionExpiry > block.timestamp, "session expired");
-            require(usdtDailyCap > 0 && payoutDailyCap > 0, "zero cap");
+            require(usdtDailyCap > 0 && payoutDailyCap == pocket.payoutDailyCap, "bad caps");
             require(encryptedSessionKey.length > 0, "missing session key");
             require(bytes(serializedSession).length > 0, "missing session");
             pocket.agent = agent;

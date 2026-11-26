@@ -20,6 +20,15 @@ import {
   POCKET_REGISTRY_ABI
 } from "@pocket/core";
 
+const TRANSFER_EVENT_ABI = [{
+  type: "event", name: "Transfer", anonymous: false,
+  inputs: [
+    { name: "from", type: "address", indexed: true },
+    { name: "to", type: "address", indexed: true },
+    { name: "value", type: "uint256", indexed: false }
+  ]
+}] as const;
+
 type ReceiptState = {
   amount: string;
   currency: string;
@@ -80,8 +89,20 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
           address: config.registryAddress as Address,
           abi: POCKET_REGISTRY_ABI,
           functionName: "getPocket",
-          args: [BigInt(pocketId)]
+          args: [BigInt(pocketId)],
+          blockNumber: txReceipt.blockNumber
         });
+        const transferVerified = txReceipt.logs.some((log) => {
+          if (log.address.toLowerCase() !== paid!.payoutToken.toLowerCase()) return false;
+          try {
+            const transfer = decodeEventLog({ abi: TRANSFER_EVENT_ABI, data: log.data, topics: log.topics });
+            return transfer.args.from.toLowerCase() === pocket.owner.toLowerCase() &&
+              transfer.args.to.toLowerCase() === pocket.recipient.toLowerCase() &&
+              transfer.args.value === paid!.amountOut;
+          } catch { return false; }
+        });
+        if (!transferVerified) throw new Error("This receipt has no matching payout-token transfer from the pocket owner to the receiver.");
+
         const result: ReceiptState = {
           amount: formatUnits(paid.amountOut, currency.decimals),
           currency: currency.symbol,

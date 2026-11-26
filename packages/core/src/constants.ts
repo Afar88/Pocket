@@ -85,8 +85,8 @@ export const POCKET_REGISTRY_ABI = [
     type: "function", name: "createPocket", stateMutability: "nonpayable",
     inputs: [
       { name: "recipient", type: "address" }, { name: "amountUsdt", type: "uint256" },
-      { name: "payoutToken", type: "address" }, { name: "period", type: "uint64" },
-      { name: "firstDue", type: "uint64" }, { name: "label", type: "string" },
+      { name: "payoutToken", type: "address" }, { name: "payoutDailyCap", type: "uint128" },
+      { name: "period", type: "uint64" }, { name: "firstDue", type: "uint64" }, { name: "label", type: "string" },
       { name: "note", type: "string" }, { name: "minOutPerUsdt", type: "uint128" }
     ], outputs: [{ name: "pocketId", type: "uint256" }]
   },
@@ -95,7 +95,7 @@ export const POCKET_REGISTRY_ABI = [
     inputs: [
       { name: "pocketId", type: "uint256" }, { name: "recipient", type: "address" },
       { name: "amountUsdt", type: "uint256" }, { name: "payoutToken", type: "address" },
-      { name: "period", type: "uint64" }, { name: "firstDue", type: "uint64" },
+      { name: "payoutDailyCap", type: "uint128" }, { name: "period", type: "uint64" }, { name: "firstDue", type: "uint64" },
       { name: "label", type: "string" }, { name: "note", type: "string" }
     ], outputs: []
   },
@@ -123,7 +123,7 @@ export const POCKET_REGISTRY_ABI = [
   { type: "event", name: "PocketCreated", anonymous: false, inputs: [
     { name: "pocketId", type: "uint256", indexed: true }, { name: "owner", type: "address", indexed: true },
     { name: "recipient", type: "address", indexed: true }, { name: "amountUsdt", type: "uint256", indexed: false },
-    { name: "payoutToken", type: "address", indexed: false }, { name: "period", type: "uint64", indexed: false },
+    { name: "payoutToken", type: "address", indexed: false }, { name: "payoutDailyCap", type: "uint128", indexed: false }, { name: "period", type: "uint64", indexed: false },
     { name: "nextDue", type: "uint64", indexed: false }, { name: "label", type: "string", indexed: false },
     { name: "note", type: "string", indexed: false }
   ]},

@@ -14,8 +14,6 @@ Pocket lets a sender pay a receiver in the receiver's local stablecoin using USD
 
 All addresses and decimals below are copied from [Textile's official Celo address book](https://docs.textilecredit.com/protocol/address-book.html) (chain ID 42220).
 
-| Receiver currency | Token | Decimals |
-| --- | --- | ---: |
 | Receiver currency | Token | Celo contract | Decimals |
 | --- | --- | --- | ---: |
 | US Dollar | USDT | `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` | 6 |
@@ -42,7 +40,7 @@ A due payment is not sent when a guard fails:
 | `no_quote` | Textile has no firm quote for the requested corridor or amount |
 | `session_expired` | The pocket's approved Altana session has expired |
 
-The agent records at most one skip event for a due period. A skip does not advance the schedule; later runs can retry that same due payment. A one-off closes only after a payment. Payment transfer and markPaid are in one Altana batch so a failed on-chain rule reverts the transfer too.
+The agent records at most one skip event for a due period. A skip does not advance the schedule; later runs can retry that same due payment. An already-expired Altana session cannot submit an on-chain expiry skip because the wallet rejects all calls from an expired key; the owner must renew the session. A one-off closes only after a payment. Payment transfer and markPaid are in one Altana batch so a failed on-chain rule reverts the transfer too.
 
 ## Project layout
 

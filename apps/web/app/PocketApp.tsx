@@ -110,6 +110,7 @@ export default function PocketApp() {
   const [editLabel, setEditLabel] = useState("");
   const [editPeriod, setEditPeriod] = useState("604800");
   const [editPayoutToken, setEditPayoutToken] = useState<Address>(POCKET_CURRENCIES[1]!.address);
+  const [editPayoutCap, setEditPayoutCap] = useState("");
   const [editNote, setEditNote] = useState("");
   const [editMinRate, setEditMinRate] = useState("0");
   const [editDue, setEditDue] = useState("");
@@ -333,14 +334,17 @@ export default function PocketApp() {
       if (amountRaw <= 0n || due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Amount and due date must be in the future.");
       if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket at or below 5 USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
-      const attachSession = Boolean(sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession && sessionMeta.expiry > Math.floor(Date.now() / 1000) && sessionMeta.payoutTokens?.some((token) => token.toLowerCase() === payoutToken.toLowerCase()) && BigInt(sessionMeta.payoutDailyCaps?.[payoutToken.toLowerCase()] ?? "0") >= payoutCapRaw);
+      const alreadyGrantedCap = pockets
+        .filter((p) => !p.deleted && !p.closed && p.payoutToken.toLowerCase() === payoutToken.toLowerCase())
+        .reduce((total, p) => total + p.payoutDailyCap, 0n);
+      const attachSession = Boolean(sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession && sessionMeta.expiry > Math.floor(Date.now() / 1000) && sessionMeta.payoutTokens?.some((token) => token.toLowerCase() === payoutToken.toLowerCase()) && BigInt(sessionMeta.payoutDailyCaps?.[payoutToken.toLowerCase()] ?? "0") >= alreadyGrantedCap + payoutCapRaw);
       beginProgress("Create pocket", ["Saving pocket to Celo", "Confirming pocket receipt", ...(attachSession ? ["Attaching session to pocket"] : [])]);
       const createHash = await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "createPocket",
-          args: [recipient as Address, amountRaw, payoutToken, BigInt(period), due, label.trim(), receiverNote.trim(), floorRaw]
+          args: [recipient as Address, amountRaw, payoutToken, payoutCapRaw, BigInt(period), due, label.trim(), receiverNote.trim(), floorRaw]
         }),
         value: 0n
       }]);
@@ -385,6 +389,7 @@ export default function PocketApp() {
         }]);
       }
       setRecipient(""); setAmount("1"); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
+      if (!attachSession && sessionMeta) setMessage("Pocket saved. Revoke the current key and grant a new session to include this currency and payout cap.");
       await refresh();
       finishProgress();
     } catch (reason) {
@@ -400,6 +405,8 @@ export default function PocketApp() {
     setEditLabel(p.label);
     setEditPeriod(p.period.toString());
     setEditPayoutToken(p.payoutToken);
+    const selected = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === p.payoutToken.toLowerCase());
+    setEditPayoutCap(formatUnits(p.payoutDailyCap, selected?.decimals ?? 18));
     setEditNote(p.note);
     setEditMinRate(formatUnits(p.minOutPerUsdt, 18));
     setEditDue(new Date(Number(p.nextDue) * 1000).toISOString().slice(0, 16));
@@ -410,13 +417,22 @@ export default function PocketApp() {
     try {
       const { registry } = requireWriteSetup();
       if (!isAddress(editRecipient)) throw new Error("Enter a valid recipient address.");
+      if (!editLabel.trim()) throw new Error("Add a name for this pocket.");
+      if (editNote.length > 80) throw new Error("The public note must be 80 characters or fewer.");
+      const currency = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === editPayoutToken.toLowerCase());
+      if (!currency) throw new Error("Choose a currency from the verified list.");
+      const amountRaw = parseUnits(editAmount, usdtDecimals);
+      const payoutCapRaw = parseUnits(editPayoutCap, currency.decimals);
+      if (amountRaw <= 0n || amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket between 0 and 5 USDT.");
+      if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const due = BigInt(Math.floor(new Date(editDue).getTime() / 1000));
+      if (due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("The next due date must be in the future.");
       await sendOwnerCalls([{
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "updatePocket",
-          args: [id, editRecipient as Address, parseUnits(editAmount, usdtDecimals), editPayoutToken, BigInt(editPeriod), due, editLabel.trim(), editNote.trim()]
+          args: [id, editRecipient as Address, amountRaw, editPayoutToken, payoutCapRaw, BigInt(editPeriod), due, editLabel.trim(), editNote.trim()]
         }),
         value: 0n
       }]);
@@ -704,7 +720,8 @@ export default function PocketApp() {
               <div>
                 <label>Name</label><input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
                 <label>Recipient</label><input value={editRecipient} onChange={(e) => setEditRecipient(e.target.value)} />
-                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>setEditPayoutToken(e.target.value as Address)}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
+                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap(currency.code==="NGN"?"100000":"100");}}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
+                <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===editPayoutToken.toLowerCase())?.symbol})</label><input value={editPayoutCap} onChange={(e)=>setEditPayoutCap(e.target.value)} inputMode="decimal"/>
                 <label>Note to receiver</label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/><p className="small">Public on the blockchain.</p>
                 <label>Minimum rate floor (0 = off)</label><input value={editMinRate} onChange={(e)=>setEditMinRate(e.target.value)} inputMode="decimal"/>
                 <div className="row">
