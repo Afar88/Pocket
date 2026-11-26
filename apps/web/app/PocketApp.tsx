@@ -432,7 +432,7 @@ export default function PocketApp() {
     setBusy(true); setError("");
     try {
       const { registry } = requireWriteSetup();
-      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [p.id, 0n] }), value: 0n }]);
+      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [p.id, p.minOutPerUsdt * 98n / 100n] }), value: 0n }]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }

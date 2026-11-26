@@ -30,15 +30,20 @@ export function buildPocketSessionPolicy(input: {
     { to: CELO_USDT, signature: "approve(address,uint256)" }
   );
   calls.push(
-    { to: input.registryAddress, signature: "markPaid(uint256,address,uint256,uint256,bytes32)" },
+    { to: input.registryAddress, signature: "markPaid(uint256,address,uint256,uint256,uint64,bytes32)" },
     { to: input.registryAddress, signature: "skipPocket(uint256,uint8)" }
   );
 
   const limits = new Map<string, bigint>([[CELO_USDT.toLowerCase(), input.usdtDailyCap]]);
   for (const token of tokens) {
     const key = token.toLowerCase(), cap = input.payoutDailyCaps[key]!;
-    // The USDT cap is the sender-spend limit too; never raise it via the local payout cap.
-    if (key !== CELO_USDT.toLowerCase() && cap > (limits.get(key) ?? 0n)) limits.set(key, cap);
+    const previous = limits.get(key) ?? 0n;
+    if (key === CELO_USDT.toLowerCase()) {
+      // Direct-USDT payouts are sender spend too; use the stricter of both caps.
+      if (cap < previous) limits.set(key, cap);
+    } else if (cap > previous) {
+      limits.set(key, cap);
+    }
   }
   return {
     calls,

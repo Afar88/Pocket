@@ -99,7 +99,7 @@ contract PocketRegistryTest {
         registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("payment"));
         _approve(id);
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("payment"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("payment"));
         require(registry.getPocket(id).nextDue == block.timestamp + 7 days, "next due advanced");
     }
 
@@ -109,7 +109,7 @@ contract PocketRegistryTest {
         _approve(id);
         _expectError("not due");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("early"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("early"));
     }
 
     function testStaleOverlappingRunCannotMarkTheNextDuePeriod() public {
@@ -128,12 +128,12 @@ contract PocketRegistryTest {
         uint256 id = _create(0);
         _approve(id);
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("once"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("once"));
         require(registry.getPocket(id).closed, "closed after one payment");
         require(registry.getPocket(id).nextDue == 0, "no next due");
         _expectError("pocket inactive");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("twice"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("twice"));
     }
 
     function testWrongTokenAndCapsAreRejected() public {
@@ -154,11 +154,11 @@ contract PocketRegistryTest {
         registry.setMinRate(id, 2e18);
         _expectError("rate below floor");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("below-floor"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("below-floor"));
         vm.prank(owner);
         registry.setMinRate(id, 0);
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("floor-off"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("floor-off"));
     }
 
     function testLastPaymentStoresFullReceiptData() public {
@@ -178,11 +178,11 @@ contract PocketRegistryTest {
         _approve(id);
         bytes32 ref = keccak256("same-ref");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, ref);
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, ref);
         vm.warp(block.timestamp + 1 days);
         _expectError("tx ref used");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, ref);
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, ref);
     }
 
     function testExpiredSessionCannotPayButCanRecordExpirySkip() public {
@@ -192,7 +192,7 @@ contract PocketRegistryTest {
         vm.warp(block.timestamp + 3);
         _expectError("session expired");
         vm.prank(agent);
-        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, keccak256("expired-payment"));
+        registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, registry.getPocket(id).nextDue, keccak256("expired-payment"));
         vm.prank(agent);
         registry.skipPocket(id, registry.SKIP_SESSION_EXPIRED());
         require(registry.getPocket(id).lastSkippedDue == registry.getPocket(id).nextDue, "expiry skip recorded");

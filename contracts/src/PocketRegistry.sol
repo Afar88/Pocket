@@ -247,6 +247,13 @@ contract PocketRegistry {
         }
     }
 
+    function _utf8Length(bytes memory value) private pure returns (uint256 characters) {
+        for (uint256 i = 0; i < value.length; i++) {
+            // UTF-8 continuation bytes start with 10xxxxxx; every other byte starts a code point.
+            if ((uint8(value[i]) & 0xC0) != 0x80) characters++;
+        }
+    }
+
     function _ratePerUsdt(address token, uint256 amountOut, uint256 usdtSpent) private view returns (uint256) {
         (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
         require(ok && data.length >= 32, "payout decimals unavailable");
