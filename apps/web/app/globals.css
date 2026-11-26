@@ -89,3 +89,8 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
 
 .pocket-card .pocket-facts { margin-top: 6px; }
 .pocket-card textarea { min-height: 72px; }
+
+/* Tap-to-open help */
+.info { position: relative; display: inline-flex; vertical-align: middle; margin-left: 6px; }
+.info-button { width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--red); background: transparent; color: var(--red); font: 600 12px/1 inherit; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.info-pop { position: absolute; z-index: 20; top: 26px; left: -8px; width: min(280px, 78vw); background: var(--navy-deep); border: 1px solid var(--red); border-radius: 10px; padding: 10px 12px; color: #e5c6cc; font-size: 12px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45); word-break: break-word; }

@@ -109,6 +109,17 @@ function sessionFromPockets(pockets: readonly PocketView[]): SessionMeta | null 
   return null;
 }
 
+// A small "i" button that shows its help text only when tapped.
+function Info({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="info">
+      <button type="button" className="info-button" aria-label="More info" aria-expanded={open} onClick={() => setOpen((v) => !v)}>i</button>
+      {open && <span className="info-pop" role="note" onClick={() => setOpen(false)}>{text}</span>}
+    </span>
+  );
+}
+
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
@@ -906,13 +917,11 @@ export default function PocketApp() {
 
       <section className="panel hero">
         <div>
-          <p className="small">USDt in your Altana wallet</p>
+          <p className="small">USDt in your Altana wallet <Info text="Funds stay in your wallet until a pocket is due." /></p>
           <div className="balance">{usdtBalance === "—" ? "—" : usdtBalance + " USDt"}</div>
-          {wallet && <p className="meta">CELO for fees: {celoBalance === "—" ? "—" : celoBalance + " CELO"}</p>}
-          <p className="sub">Funds stay in your wallet until a pocket is due.</p>
+          {wallet && <p className="meta">CELO for fees: {celoBalance === "—" ? "—" : celoBalance + " CELO"} <Info text={setupFee ? "New wallets pay about " + setupFee.celo + " CELO (about $" + setupFee.usd + ") once for Altana setup: one fee for the first pocket, one for the agent key. Each new agent key costs about half that again." : "CELO pays Altana's setup fees and network fees."} /></p>}
           {wallet && <p className="meta">Wallet: <code>{wallet.address}</code> <button type="button" className="secondary" onClick={() => void copyAddress(wallet.address)}>{copied ? "Copied" : "Copy"}</button></p>}
           {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt{setupFee ? ", plus about " + setupFee.celo + " CELO (about $" + setupFee.usd + ") for Altana's one-time setup" : ", plus CELO for Altana's one-time setup"}. Then create a pocket here. Until then, only this browser can open this wallet.</div>}
-          {!wallet && setupFee && <p className="small">New wallets pay about {setupFee.celo} CELO (${setupFee.usd}) once, for Altana setup.</p>}
         </div>
         <div className="actions">
           <button disabled={busy || !config?.attributionTag} onClick={() => void createWallet(false)}>Create passkey wallet</button>
@@ -923,54 +932,44 @@ export default function PocketApp() {
 
       <div className="grid">
         <section className="panel form-panel">
-          <h2>New pocket</h2>
-          <p className="small">Set who gets paid, how much, and how often.</p>
+          <h2>New pocket <Info text="Set who gets paid, how much, and how often. USDT goes straight across; other currencies are swapped through Textile at payout time." /></h2>
           <label>Name</label>
           <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={64} placeholder="Family upkeep" />
           <label>Recipient wallet</label>
           <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..." />
-          <label>Receiver gets</label>
+          <label>Receiver gets <Info text="MiniPay shows dollars only." /></label>
           <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(""); }}>
             {POCKET_CURRENCIES.filter((currency)=>currency.payable!==false).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
-            <option value={CELO_USDT}>US Dollar (USDT)</option>
           </select>
-          <p className="small">MiniPay shows dollars only.</p>
           <div className="row">
-            <div><label>USDT amount</label><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></div>
+            <div><label>USDT amount <Info text="Keep it within your agent's daily limit, which also covers small relay fees." /></label><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" /></div>
             <div><label>Repeat</label><select value={period} onChange={(e) => setPeriod(e.target.value)}>{PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</select></div>
           </div>
           <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===payoutToken.toLowerCase())?.symbol})</label>
           <input value={payoutCap} onChange={(e)=>setPayoutCap(e.target.value)} inputMode="decimal"/>
-          <label>Minimum rate floor (local currency per USDT)</label><input value={minRate} onChange={(e) => setMinRate(e.target.value)} inputMode="decimal" placeholder="0 = off"/>
-           <p className="small">{POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.isUsdt ? "USDT goes across 1:1. No rate needed." : rateLoading ? "Fetching live Textile rate…" : liveRate ? (rateSource === "last" ? "Last Textile trade: " : "Live Textile rate: ") + liveRate + " " + (POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.symbol ?? "") + " per USDT. Updates every minute." : "Textile rate unavailable right now. Set a floor or leave 0 (off)."}</p>
-          <label>Note to receiver</label><textarea maxLength={80} value={receiverNote} onChange={(e)=>setReceiverNote(e.target.value)} placeholder="A short public message"/>
-          <p className="small">Public on the blockchain. {receiverNote.length}/80</p>
+          <label>Minimum rate floor (local currency per USDT) <Info text={(POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.isUsdt ? "USDT goes across 1:1. No rate needed." : rateLoading ? "Fetching live Textile rate…" : liveRate ? (rateSource === "last" ? "Last Textile trade: " : "Live Textile rate: ") + liveRate + " " + (POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase())?.symbol ?? "") + " per USDT. Updates every minute." : "Textile rate unavailable right now. Set a floor or leave 0 (off).") + " A payout waits if the rate is below your floor."} /></label><input value={minRate} onChange={(e) => setMinRate(e.target.value)} inputMode="decimal" placeholder="0 = off"/>
+          <label>Note to receiver <Info text="Public on the blockchain. Up to 80 characters." /></label><textarea maxLength={80} value={receiverNote} onChange={(e)=>setReceiverNote(e.target.value)} placeholder="A short public message"/>
           <label>First payment date and time</label>
           <input type="datetime-local" value={firstDue} onChange={(e) => setFirstDue(e.target.value)} />
-          <div className="notice">USDT payouts transfer directly. Other currencies use a Textile quote. Keep the payment below your session cap so there is room for relay fees.</div>
           <button disabled={busy || rateLoading || !wallet || !readyForWrites} onClick={() => void createPocket()}>Create pocket</button>
         </section>
 
         <section className="panel session-panel">
-          <div className="section-heading"><div><h2>Session key</h2><p className="small">A limited key for the Pocket agent.</p></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
+          <div className="section-heading"><div><h2>Agent key <Info text="A limited key that lets Pocket's agent pay your pockets. It can only send in your pocket currencies, let Textile swap USDT, and mark pockets paid or skipped. It can't edit your pockets, and it never spends more than your daily limit, fees included. It's locked so only the agent can open it." /></h2></div>{sessionMeta && <span className={"status-pill " + (sessionIsExpired ? "expired" : "active")}>{sessionIsExpired ? "Expired" : "Active"}</span>}</div>
           {sessionMeta ? <div className="session-summary"><div className="limit-grid"><div className="limit-tile"><span>Daily USDT cap</span><strong className="mono">{formatUnits(BigInt(sessionMeta.usdtDailyCap), usdtDecimals)} USDT</strong></div><div className="limit-tile"><span>Session spend</span><strong className="mono">{spendMeter ? "Today: $" + formatUnits(spendMeter.used, usdtDecimals) + " of $" + formatUnits(spendMeter.cap, usdtDecimals) + " used, expires " + new Date(sessionMeta.expiry * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Spend unavailable"}</strong></div></div><div className="session-detail"><span>Expiry</span><strong>{new Date(sessionMeta.expiry * 1000).toLocaleString()}</strong></div><div className="session-detail"><span>Key ID</span><code>{shortAddress(sessionMeta.keyId)}</code></div><div className="contract-list"><span className="contract-heading">Allowed contracts</span><div className="contract-item"><span>Textile reactor · execute and signature check</span><code>{shortAddress(TEXTILE_REACTOR)}</code></div><div className="contract-item"><span>Textile vault executor · fill</span><code>{shortAddress(TEXTILE_VAULT_EXECUTOR)}</code></div><div className="contract-item"><span>USDT · approve</span><code>{shortAddress(CELO_USDT)}</code></div><div className="contract-item"><span>Currencies it can pay</span><code>{(sessionMeta.payoutTokens ?? []).map((token)=>POCKET_CURRENCIES.find((c)=>c.address.toLowerCase()===token.toLowerCase())?.symbol ?? shortAddress(token)).join(", ") || "Regrant session for v2 token permissions"}</code></div><div className="contract-item"><span>PocketRegistry · markPaid / skipPocket</span><code>{config?.registryAddress ? shortAddress(config.registryAddress) : "Unavailable"}</code></div></div><p className="small">Limits are enforced by the Altana session. USDT headroom includes relay fees. Revoke the key to stop the agent.</p><button className="danger revoke-button" disabled={busy || !wallet || !readyForWrites} onClick={() => void revokeSession()}>Revoke key</button></div> : <><p className="small">Set the limits before granting the agent access. You can revoke the key later.</p><div className="row">
-            <div><label>USDT the agent can spend per day</label><select value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)}>{USDT_DAILY_CAP_CHOICES.map((choice) => <option key={choice} value={choice}>{choice} USDT</option>)}</select><p className="small">Shared by all pockets on this key.</p></div>
-            <div><label>Payout token limits</label><span className="small">Each active pocket's token cap is included in the session.</span></div>
+            <div><label>USDT the agent can spend per day <Info text="One limit shared by all pockets on this key." /></label><select value={usdtCap} onChange={(e) => setUsdtCap(e.target.value)}>{USDT_DAILY_CAP_CHOICES.map((choice) => <option key={choice} value={choice}>{choice} USDT</option>)}</select></div>
           </div>
-          <label>Key expires in days</label>
+          <label>Key expires in <Info text="Each new key costs an Altana fee in CELO, so a longer key means fewer fees." /></label>
           <select value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)}>
             <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option><option value="365">1 year</option>
           </select>
-          <div className="notice">
-            Allowed calls are method-limited: transfer only on selected payout tokens, USDT approval to Textile for conversions, and PocketRegistry payment/skip marks. Owner-only edits are not allowed. The USDT cap includes Altana relay fees. The session key is encrypted to the agent and is never shown or stored here.
-          </div>
-          <p className="meta">FX: {TEXTILE_REACTOR}<br />USDT: {CELO_USDT}<br />Nine local payout corridors<br />Registry: {config?.registryAddress || "Not deployed"}</p>
+          <p className="meta">Contracts <Info text={"Textile: " + TEXTILE_REACTOR + " · USDT: " + CELO_USDT + " · Registry: " + (config?.registryAddress || "Not deployed")} /></p>
               <button disabled={busy || !wallet || !readyForWrites || pockets.length === 0} onClick={() => void grantSession()}>Grant session key</button>
             </>}
         </section>
       </div>
 
-      <section className="panel pockets-panel"><div className="section-heading"><div><h2>Your pockets</h2><p className="small">Rules are on Celo. Funds stay in your wallet until payout.</p></div>{wallet && <span className="count-pill">{pockets.filter((p) => !p.deleted).length} pockets</span>}</div>
+      <section className="panel pockets-panel"><div className="section-heading"><div><h2>Your pockets <Info text="Rules are on Celo. Funds stay in your wallet until payout." /></h2></div>{wallet && <span className="count-pill">{pockets.filter((p) => !p.deleted).length} pockets</span>}</div>
         {!wallet && <p>Sign in with your passkey to see your pockets.</p>}
         {wallet && pockets.length === 0 && <p>No pockets yet.</p>}
         {pockets.filter((p) => !p.deleted).map((p) => (
@@ -988,7 +987,7 @@ export default function PocketApp() {
                 <label>Recipient</label><input value={editRecipient} onChange={(e) => setEditRecipient(e.target.value)} />
                 <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap("");}}>{POCKET_CURRENCIES.filter((currency)=>currency.payable!==false).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
                 <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===editPayoutToken.toLowerCase())?.symbol})</label><input value={editPayoutCap} onChange={(e)=>setEditPayoutCap(e.target.value)} inputMode="decimal"/>
-                <label>Note to receiver</label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/><p className="small">Public on the blockchain.</p>
+                <label>Note to receiver <Info text="Public on the blockchain. Up to 80 characters." /></label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/>
                 <label>Minimum rate floor (0 = off)</label><input value={editMinRate} onChange={(e)=>setEditMinRate(e.target.value)} inputMode="decimal"/>
                 <div className="row">
                   <div><label>USDt amount</label><input value={editAmount} onChange={(e) => setEditAmount(e.target.value)} /></div>
@@ -1014,7 +1013,7 @@ export default function PocketApp() {
       <section className="panel how-panel"><h2>How it works</h2><div className="how-strip"><div className="how-step"><span>01</span><strong>Your wallet</strong><small>Funds stay with you</small></div><div className="how-arrow">→</div><div className="how-step"><span>02</span><strong>Altana session key</strong><small>With daily limits</small></div><div className="how-arrow">→</div><div className="how-step"><span>03</span><strong>Pocket agent</strong><small>ERC-8004 #10132</small></div><div className="how-arrow">→</div><div className="how-step"><span>04</span><strong>Textile FX swap</strong><small>USDT to cNGN</small></div><div className="how-arrow">→</div><div className="how-step"><span>05</span><strong>Recipient</strong><small>Gets cNGN</small></div></div></section>
 
       <section className="panel payments-panel">
-        <h2>Activity</h2><p className="small">Payments and skips from PocketRegistry events, newest first.</p>
+        <h2>Activity <Info text="Payments and skips recorded on Celo, newest first. The agent checks about every 15 minutes; a late run still pays overdue pockets." /></h2>
         {historyUnavailable?<p className="error">History unavailable right now.</p>:payments.length===0?<p>No payment or skip events found.</p>:
           <ul className="list">{payments.map((item)=><li className="payment-receipt" key={item.txHash+item.pocketId+item.kind}>
             <div className="receipt-top"><strong>{item.kind==="paid"?"Payment":"Skipped"} · Pocket <code>#{item.pocketId}</code></strong><span className="small">{item.timestamp===undefined?"Block "+item.blockNumber.toString():new Date(Number(item.timestamp)*1000).toLocaleString()}</span></div>
@@ -1024,7 +1023,6 @@ export default function PocketApp() {
             </div>
           </li>)}</ul>}
       </section>
-      <p className="small">Checked about every 15 minutes. GitHub Actions may run late; overdue pockets remain due until paid.</p>
     </main>
   );
 }
