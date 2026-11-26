@@ -87,9 +87,9 @@ function toLocalInput(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 // A time picked for "now" is already a little in the past by the time the
-// passkey prompt finishes. Treat anything within the last 10 minutes as now
+// passkey prompt finishes. Treat anything within the last 30 minutes as now
 // and schedule it a minute ahead; older times are still refused.
-const NOW_GRACE_SECONDS = 600n;
+const NOW_GRACE_SECONDS = 1800n;
 function dueFromInput(value: string, label: string): bigint {
   const picked = new Date(value).getTime();
   if (!value || Number.isNaN(picked)) throw new Error(`Pick a ${label}.`);
