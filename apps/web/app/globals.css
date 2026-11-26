@@ -112,3 +112,13 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
 .tab, .tab:hover { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; padding: 6px 2px; background: transparent; border: 0; box-shadow: none; border-radius: 12px; color: var(--muted); font-size: 11px; font-weight: 600; }
 .tab-icon { font-size: 18px; line-height: 1; }
 .tab.active { color: #ffc0c5; background: var(--red-wash); }
+
+/* Header status */
+.pill.status { gap: 6px; } .pill.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.status.on .dot { background: var(--red-bright); box-shadow: 0 0 0 3px var(--red-wash); } .pill.status.pending .dot { background: #ffb8bf; }
+/* Transaction steps as a sheet above the bottom menu */
+.progress-sheet { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(560px, calc(100% - 20px)); z-index: 35; margin: 0; box-shadow: 0 -6px 30px rgba(0,0,0,.5); border: 1px solid var(--red); }
+.sheet-close, .sheet-close:hover { min-height: 0; padding: 0 6px; background: transparent; border: 0; box-shadow: none; color: var(--muted); font-size: 20px; line-height: 1; }
+/* Activity */
+.activity-heading { margin: 18px 0 8px; font-size: 13px; color: var(--muted-strong); text-transform: uppercase; letter-spacing: .06em; }
+.move-in { color: #ffc0c5; } .move-out { color: var(--ink); }
