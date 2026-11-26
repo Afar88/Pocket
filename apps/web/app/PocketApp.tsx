@@ -162,31 +162,30 @@ function Info({ text }: { text: string }) {
   );
 }
 
-// Pocket's kangaroo. Tap it to hear what Pocket does; it says hello once
-// on a first visit.
+// Pocket's kangaroo. A "Tap me" sign invites a tap; the about text shows
+// one short line at a time in a thought cloud.
+const ROO_LINES = [
+  "Hi, I'm Roo! Pocket sends money to people you care about.",
+  "You set who, how much and how often. I pay them on Celo.",
+  "Dollars or their local currency. Your money stays with you until it's due.",
+  "Pause or stop anytime. Tap New to start."
+];
 function Mascot() {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!window.localStorage.getItem("pocket-mascot-seen")) {
-      setOpen(true);
-      window.localStorage.setItem("pocket-mascot-seen", "1");
-    }
-  }, []);
+  const [line, setLine] = useState<number | null>(null);
+  const tapRoo = () => setLine((v) => (v === null ? 0 : v + 1 < ROO_LINES.length ? v + 1 : null));
   return (
     <section className="mascot">
-      {open && (
-        <div className="mascot-bubble" role="dialog" aria-label="What Pocket is">
-          <button type="button" className="mascot-close" aria-label="Close" onClick={() => setOpen(false)}>×</button>
-          <strong>Hi, I'm Roo!</strong>
-          <p>Pocket sends money to people you care about, on your schedule.</p>
-          <p>Put USDt in your wallet, set who gets paid, how much and how often, and I pay them on Celo, in dollars or their local currency.</p>
-          <p>Your money stays in your wallet until a payment is due, and you can pause or stop anytime.</p>
-        </div>
+      {line !== null && (
+        <button type="button" className="thought" aria-live="polite" onClick={tapRoo}>
+          <span className="thought-text">{ROO_LINES[line]}</span>
+          <span className="thought-count">{line + 1}/{ROO_LINES.length}</span>
+          <span className="thought-dot one" aria-hidden="true" /><span className="thought-dot two" aria-hidden="true" />
+        </button>
       )}
-      <button type="button" className="mascot-button" aria-label="What is Pocket?" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="mascot-button" aria-label="What is Pocket?" onClick={tapRoo}>
         <img src="/pocket-kangaroo.png" alt="Roo, Pocket's kangaroo" width={297} height={480} />
+        {line === null && <span className="tap-sign">Tap me!</span>}
       </button>
-      {!open && <span className="mascot-hint">Tap Roo to learn what Pocket does</span>}
     </section>
   );
 }
