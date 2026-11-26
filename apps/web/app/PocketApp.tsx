@@ -92,11 +92,11 @@ export default function PocketApp() {
   const [error, setError] = useState("");
 
   const [recipient, setRecipient] = useState("");
-  const [amount, setAmount] = useState("1");
+  const [amount, setAmount] = useState("");
   const [label, setLabel] = useState("Weekly support");
   const [period, setPeriod] = useState("604800");
   const [payoutToken, setPayoutToken] = useState<Address>(POCKET_CURRENCIES[1]!.address);
-  const [payoutCap, setPayoutCap] = useState("100000");
+  const [payoutCap, setPayoutCap] = useState("");
   const [minRate, setMinRate] = useState("");
   const [liveRate, setLiveRate] = useState<string | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
@@ -334,7 +334,9 @@ export default function PocketApp() {
       if (!currency) throw new Error("Choose a currency from the verified list.");
       if (receiverNote.length > 80) throw new Error("The public note must be 80 characters or fewer.");
       const amountRaw = parseUnits(amount, usdtDecimals);
-      const payoutCapRaw = parseUnits(payoutCap || amount, currency.decimals);
+      if (!amount.trim()) throw new Error("Enter the USDT amount for this pocket.");
+      if (!payoutCap.trim()) throw new Error("Enter the daily payout cap in the receiver currency.");
+      const payoutCapRaw = parseUnits(payoutCap, currency.decimals);
       const floorRaw = minRate.trim() ? parseUnits(minRate, 18) : 0n;
       const due = BigInt(Math.floor(new Date(firstDue).getTime() / 1000));
       if (amountRaw <= 0n || due <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Amount and due date must be in the future.");
@@ -394,7 +396,7 @@ export default function PocketApp() {
           value: 0n
         }]);
       }
-      setRecipient(""); setAmount("1"); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
+      setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
       if (!attachSession && sessionMeta) setMessage("Pocket saved. Revoke the current key and grant a new session to include this currency and payout cap.");
       await refresh();
       finishProgress();
@@ -675,7 +677,7 @@ export default function PocketApp() {
           <label>Recipient wallet</label>
           <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..." />
           <label>Receiver gets</label>
-          <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(currency.code==="NGN"?"100000":"100"); }}>
+          <select value={payoutToken} onChange={(e) => { const value=e.target.value as Address; setPayoutToken(value); const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===value.toLowerCase()); if(currency) setPayoutCap(""); }}>
             {POCKET_CURRENCIES.filter((item)=>!item.isUsdt).map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}
             <option value={CELO_USDT}>US Dollar (USDT)</option>
           </select>
@@ -728,7 +730,7 @@ export default function PocketApp() {
               <div>
                 <label>Name</label><input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
                 <label>Recipient</label><input value={editRecipient} onChange={(e) => setEditRecipient(e.target.value)} />
-                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap(currency.code==="NGN"?"100000":"100");}}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
+                <label>Receiver gets</label><select value={editPayoutToken} onChange={(e)=>{const token=e.target.value as Address;setEditPayoutToken(token);const currency=POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===token.toLowerCase());if(currency)setEditPayoutCap("");}}>{POCKET_CURRENCIES.map((currency)=><option key={currency.address} value={currency.address}>{currency.name} ({currency.symbol})</option>)}</select>
                 <label>Daily payout cap ({POCKET_CURRENCIES.find((item)=>item.address.toLowerCase()===editPayoutToken.toLowerCase())?.symbol})</label><input value={editPayoutCap} onChange={(e)=>setEditPayoutCap(e.target.value)} inputMode="decimal"/>
                 <label>Note to receiver</label><textarea maxLength={80} value={editNote} onChange={(e)=>setEditNote(e.target.value)}/><p className="small">Public on the blockchain.</p>
                 <label>Minimum rate floor (0 = off)</label><input value={editMinRate} onChange={(e)=>setEditMinRate(e.target.value)} inputMode="decimal"/>
