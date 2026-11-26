@@ -106,7 +106,7 @@ Do not enable unattended payments until you have checked the Textile and Altana 
 For the first payment:
 
 1. Confirm the scheduled agent run sees the expected due pocket.
-2. For a non-USDT pocket, confirm the Textile RFQ is for Celo chain ID 42220, USDT to the pocket's selected payout token, the expected Altana smart-wallet taker, and the documented Textile reactor. For a USDT pocket, confirm there is no Textile request.
+2. For a non-USDT pocket, confirm the Textile RFQ is for Celo chain ID 42220, USDT to the pocket's selected payout token, the expected Altana smart-wallet taker, and the documented Textile reactor (or, for an Operator Vault fill, the documented VaultOrderExecutor). For a USDT pocket, confirm there is no Textile request.
 3. For a converted payment, confirm the firm quote amount, output, and expiry.
 4. Watch for an exact USDT approval only if the current allowance is too low. Approval, swap, payout, and markPaid belong in one Altana batch.
 5. Verify the payout token transfer and PocketPaid event from the run log's Celoscan link.

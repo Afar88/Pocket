@@ -7,6 +7,8 @@ export const CELOSCAN_ADDRESS = "https://celoscan.io/address/";
 
 export const CELO_USDT = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" as Address;
 export const TEXTILE_REACTOR = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" as Address;
+/** Textile Operator Vault fills: approve USDT to this executor and call fill((bytes,bytes)). Source: docs.textilecredit.com/protocol/address-book.html (Celo). */
+export const TEXTILE_VAULT_EXECUTOR = "0x01b006d5c687bde182aa36F542f1f014144742e2" as Address;
 export const ERC8004_IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" as Address;
 export const ALTANA_KEYSTORE = "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c" as Address;
 

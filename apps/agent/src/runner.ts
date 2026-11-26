@@ -1,5 +1,5 @@
 import {
-  CELOSCAN_TX, CELO_USDT, POCKET_REGISTRY_ABI, TEXTILE_REACTOR, currencyByToken
+  CELOSCAN_TX, CELO_USDT, POCKET_REGISTRY_ABI, TEXTILE_REACTOR, TEXTILE_VAULT_EXECUTOR, currencyByToken
 } from "@pocket/core";
 import { encodeFunctionData, keccak256, toHex, type Address, type Hex } from "viem";
 import type { AgentLogger, ExecuteResult, FirmQuote, PocketRecord, TxRequest } from "./types.js";
@@ -41,9 +41,21 @@ const approveAbi = [{
   inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
   outputs: [{ name: "", type: "bool" }]
 }] as const;
-const allowedSwapSelectors = new Set([
-  keccak256(toHex("execute((bytes,bytes))")).slice(0, 10).toLowerCase(),
-  keccak256(toHex("executeBatch((bytes,bytes)[])")).slice(0, 10).toLowerCase()
+const selectorOf = (signature: string) => keccak256(toHex(signature)).slice(0, 10).toLowerCase();
+/**
+ * The only two places a Textile swap may go, and the selectors each accepts.
+ * Reactor: normal maker fills. Vault executor: fills from a Textile Operator Vault,
+ * where the executor pulls USDT from the taker, so the approval goes to the executor.
+ */
+const swapRoutes = new Map<string, { spender: Address; selectors: Set<string> }>([
+  [TEXTILE_REACTOR.toLowerCase(), {
+    spender: TEXTILE_REACTOR,
+    selectors: new Set([selectorOf("execute((bytes,bytes))"), selectorOf("executeBatch((bytes,bytes)[])")])
+  }],
+  [TEXTILE_VAULT_EXECUTOR.toLowerCase(), {
+    spender: TEXTILE_VAULT_EXECUTOR,
+    selectors: new Set([selectorOf("fill((bytes,bytes))")])
+  }]
 ]);
 
 function ratePerUsdt(quote: FirmQuote, tokenDecimals: number): bigint {
@@ -130,10 +142,12 @@ export async function runDuePockets(deps: RunnerDeps, attributionTag: string): P
         if (!quote.rfqId || !quote.claimToken) throw new Error("Textile quote is missing its RFQ ID or claim token.");
         if (quote.taker.toLowerCase() !== pocket.agent.toLowerCase()) throw new Error("Textile quote taker does not match the approved Altana wallet.");
         if (quote.reactor.toLowerCase() !== TEXTILE_REACTOR.toLowerCase()) throw new Error("Textile returned an unrecognised reactor address; refusing to execute.");
-        if (quote.swap.to.toLowerCase() !== TEXTILE_REACTOR.toLowerCase()) throw new Error("Textile swap target is not the documented Celo reactor.");
+        const route = swapRoutes.get(quote.swap.to.toLowerCase());
+        if (!route) throw new Error("Textile swap target is not the documented Celo reactor or vault executor.");
         if (quote.swap.chainId !== 42220) throw new Error("Textile returned a swap transaction for a non-Celo-mainnet chain.");
+        if (BigInt(quote.swap.value) !== 0n) throw new Error("Textile swap carries native value; refusing to execute.");
         const selector = quote.swap.data.length >= 10 ? quote.swap.data.slice(0, 10).toLowerCase() : quote.swap.data.toLowerCase();
-        if (!allowedSwapSelectors.has(selector)) throw new Error("Textile swap calldata selector " + (selector || "<missing>") + " is not allowed.");
+        if (!route.selectors.has(selector)) throw new Error("Textile swap calldata selector " + (selector || "<missing>") + " is not allowed for " + quote.swap.to + ".");
         if (quote.takerPays <= 0n || quote.takerPays > pocket.amountUsdt || quote.takerPays > deps.maxUsdtDailyCap || quote.takerPays > pocket.usdtDailyCap) {
           await recordSkip(deps, pocket, SKIP_REASON.over_cap, "over_cap");
           continue;
@@ -150,11 +164,11 @@ export async function runDuePockets(deps: RunnerDeps, attributionTag: string): P
           continue;
         }
 
-        const currentAllowance = await deps.allowance(pocket.agent, TEXTILE_REACTOR);
+        const currentAllowance = await deps.allowance(pocket.agent, route.spender);
         if (currentAllowance < quote.takerPays) {
           calls.push({
             to: CELO_USDT,
-            data: encodeFunctionData({ abi: approveAbi, functionName: "approve", args: [TEXTILE_REACTOR, quote.takerPays] }),
+            data: encodeFunctionData({ abi: approveAbi, functionName: "approve", args: [route.spender, quote.takerPays] }),
             value: 0n
           });
         }

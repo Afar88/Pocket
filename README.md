@@ -65,6 +65,6 @@ Agent tests mock Textile quotes, Altana sessions, and transaction execution. The
 - Celo mainnet only (chain ID 42220).
 - The session's USDT daily cap defaults to a maximum of 5 USDT; relay fees consume session allowance too.
 - The session call allowlist only permits transfer on the selected payout tokens, USDT approve to Textile when conversion is needed, and PocketRegistry mark/skip methods.
-- The Textile swap selector must be one of the two reviewed reactor entry points. Quote expiry is checked again before execution and the one permitted 502 retry uses a fresh nonce/signature.
+- The Textile swap must go to one of two documented Celo contracts with its own selectors: the reactor (`execute`, `executeBatch`) or, for Operator Vault fills, the VaultOrderExecutor `0x01b006d5c687bde182aa36F542f1f014144742e2` (`fill`). The exact USDT approval goes to whichever of the two the swap calls. Quote expiry is checked again before execution and the one permitted 502 retry uses a fresh nonce/signature.
 - Never commit signing keys, session private keys, or environment secrets. Do not deploy or pay from CI.
 - Scheduled checks run about every 15 minutes. A late run still considers overdue pockets due.

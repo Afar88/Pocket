@@ -3,7 +3,7 @@ import { decodeFunctionData, keccak256, toHex, type Hex } from "viem";
 import type { RunnerDeps } from "../src/runner.js";
 import { runDuePockets } from "../src/runner.js";
 import type { FirmQuote, PocketRecord } from "../src/types.js";
-import { CELO_USDT, ERC20_ABI, POCKET_REGISTRY_ABI, POCKET_CURRENCIES, TEXTILE_REACTOR } from "@pocket/core";
+import { CELO_USDT, ERC20_ABI, POCKET_REGISTRY_ABI, POCKET_CURRENCIES, TEXTILE_REACTOR, TEXTILE_VAULT_EXECUTOR } from "@pocket/core";
 
 const address = "0x1111111111111111111111111111111111111111" as const;
 const registry = "0x3333333333333333333333333333333333333333" as const;
@@ -45,6 +45,40 @@ function deps(overrides: Partial<RunnerDeps> = {}): RunnerDeps {
 }
 
 describe("Pocket v2 agent runner", () => {
+  it("pays through the Textile vault executor, approving the executor not the reactor", async () => {
+    const fillSelector = keccak256(toHex("fill((bytes,bytes))")).slice(0, 10);
+    const vaultQuote = quote({ swap: { to: TEXTILE_VAULT_EXECUTOR, data: (fillSelector + "00") as Hex, value: "0", chainId: 42220 } });
+    const allowance = vi.fn(async () => 0n);
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    await runDuePockets(deps({ getQuote: async () => vaultQuote, allowance, execute }), "celo_pocket");
+    expect(allowance).toHaveBeenCalledWith(address, TEXTILE_VAULT_EXECUTOR);
+    const calls = execute.mock.calls[0]?.[1] as readonly { to: string; data: Hex }[];
+    expect(calls[0]?.to).toBe(CELO_USDT);
+    const approval = decodeFunctionData({ abi: ERC20_ABI, data: calls[0]!.data });
+    expect(approval.functionName).toBe("approve");
+    expect((approval.args as readonly unknown[])[0]).toBe(TEXTILE_VAULT_EXECUTOR);
+    expect(calls[1]?.to).toBe(TEXTILE_VAULT_EXECUTOR);
+  });
+
+  it("refuses reactor selectors sent to the vault executor and fill sent to the reactor", async () => {
+    const fillSelector = keccak256(toHex("fill((bytes,bytes))")).slice(0, 10);
+    for (const swap of [
+      { to: TEXTILE_VAULT_EXECUTOR, data: (executeSelector + "00") as Hex, value: "0", chainId: 42220 },
+      { to: TEXTILE_REACTOR, data: (fillSelector + "00") as Hex, value: "0", chainId: 42220 }
+    ]) {
+      const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+      await runDuePockets(deps({ getQuote: async () => quote({ swap }), execute }), "celo_pocket").catch(() => undefined);
+      expect(execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a swap to any other contract", async () => {
+    const execute = vi.fn(async () => ({ status: "CONFIRMED" as const, transactionHash: hash }));
+    const swap = { to: "0x9999999999999999999999999999999999999999" as const, data: (executeSelector + "00") as Hex, value: "0", chainId: 42220 };
+    await runDuePockets(deps({ getQuote: async () => quote({ swap }), execute }), "celo_pocket").catch(() => undefined);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("pays a USDT pocket with a direct transfer and never calls Textile", async () => {
     const state = pocket({ payoutToken: CELO_USDT, amountUsdt: 1_000_000n, payoutDailyCap: 2_000_000n, period: 0n });
     const getQuote = vi.fn(async () => quote());

@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { CELO_USDT, POCKET_CURRENCIES, TEXTILE_REACTOR } from "./constants.js";
+import { CELO_USDT, POCKET_CURRENCIES, TEXTILE_REACTOR, TEXTILE_VAULT_EXECUTOR } from "./constants.js";
 
 export type PocketSessionPolicy = {
   calls: readonly { to: Address; signature?: string }[];
@@ -27,6 +27,7 @@ export function buildPocketSessionPolicy(input: {
   if (nonUsdt) calls.unshift(
     { to: TEXTILE_REACTOR, signature: "execute((bytes,bytes))" },
     { to: TEXTILE_REACTOR, signature: "executeBatch((bytes,bytes)[])" },
+    { to: TEXTILE_VAULT_EXECUTOR, signature: "fill((bytes,bytes))" },
     { to: CELO_USDT, signature: "approve(address,uint256)" }
   );
   calls.push(
