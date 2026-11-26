@@ -80,6 +80,12 @@ const PERIODS = [
 // then Celo has no record of the passkey, so "Sign in" cannot find it. Keep
 // the passkey's public details (wallet address, credential id, public key,
 // rpId; no secrets) in this browser until the wallet is active.
+const ALTANA_KEYSTORE_CONTROLLER = "0x47bA5fc2A5b0CcB24BA3fAC9D4B59400eE9fd1D6" as Address;
+const CELO_USD_FEED = "0x0568fD19986748cEfF3301e55c0eb1E729E0Ab7e" as Address;
+const ALTANA_FEE_ABI = [{ type: "function", name: "getRegistrationFeeInWei", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }] as const;
+const CHAINLINK_ROUND_ABI = [{ type: "function", name: "latestRoundData", stateMutability: "view", inputs: [], outputs: [
+  { name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" },
+  { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }] as const;
 const PENDING_PASSKEY_PREFIX = "pocket-passkey-pending:";
 type PendingPasskey = { address: string; id: string; publicKey: Hex; rpId?: string };
 function savePendingPasskey(record: PendingPasskey) {
@@ -146,6 +152,26 @@ export default function PocketApp() {
     chain: celo,
     transport: http(config?.rpcUrl || CELO_RPC_DEFAULT)
   }), [config?.rpcUrl]);
+
+  // Altana's one-time Keystore fee, read live: a USD amount priced in CELO.
+  // A new wallet pays it once when its first pocket is created and once more
+  // when it grants the agent key. The SDK sends 10% extra and refunds the rest.
+  const [setupFee, setSetupFee] = useState<{ celo: string; usd: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [fee, round] = await Promise.all([
+          publicClient.readContract({ address: ALTANA_KEYSTORE_CONTROLLER, abi: ALTANA_FEE_ABI, functionName: "getRegistrationFeeInWei" }),
+          publicClient.readContract({ address: CELO_USD_FEED, abi: CHAINLINK_ROUND_ABI, functionName: "latestRoundData" })
+        ]);
+        const total = fee * 2n * 110n / 100n;
+        const usdCents = Number(total * BigInt(round[1]) / 10n ** 24n);
+        if (!cancelled) setSetupFee({ celo: Number(formatUnits(total, 18)).toFixed(1), usd: (usdCents / 100).toFixed(2) });
+      } catch { if (!cancelled) setSetupFee(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [publicClient]);
 
   const registryAddress = config?.registryAddress as Address | undefined;
   const readyForWrites = Boolean(
@@ -719,7 +745,8 @@ export default function PocketApp() {
           <div className="balance">{usdtBalance === "—" ? "—" : usdtBalance + " USDt"}</div>
           <p className="sub">Funds stay in your wallet until a pocket is due.</p>
           {wallet && <p className="meta">Wallet: {wallet.address}</p>}
-          {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt, then create a pocket on this page. Until then, only this browser can open this wallet.</div>}
+          {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt{setupFee ? ", plus about " + setupFee.celo + " CELO (about $" + setupFee.usd + ") for Altana's one-time setup" : ", plus CELO for Altana's one-time setup"}. Then create a pocket here. Until then, only this browser can open this wallet.</div>}
+          {!wallet && setupFee && <p className="small">New wallets pay about {setupFee.celo} CELO (${setupFee.usd}) once, for Altana setup.</p>}
         </div>
         <div className="actions">
           <button disabled={busy || !config?.attributionTag} onClick={() => void createWallet(false)}>Create passkey wallet</button>
