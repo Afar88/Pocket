@@ -1,14 +1,12 @@
 import {
   createPublicClient,
-  createWalletClient,
   http,
   parseUnits,
   type Address,
   type Hex
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import { celo } from "viem/chains";
-import { withAttribution, verifyTx } from "@celo/attribution-tags";
+import { verifyTx } from "@celo/attribution-tags";
 import {
   CELOSCAN_TX,
   CELO_USDT,
@@ -39,7 +37,6 @@ async function main() {
   assertAttributionTag(tag);
 
   const config = readAgentConfig();
-  const account = privateKeyToAccount(config.privateKey);
   const publicClient = createPublicClient({
     chain: celo,
     transport: http(config.rpcUrl || CELO_RPC_DEFAULT)
@@ -50,18 +47,9 @@ async function main() {
     throw new Error("Pocket agent requires Celo mainnet (42220); RPC returned chain " + chainId + ".");
   }
 
-  // One viem wallet client, tagged once as requested. Value-moving calls and
-  // Textile's wallet-bound TakerControl signature use Altana's session client:
-  // the EOA cannot directly impersonate the smart wallet or bypass session caps.
-  // Altana appCode tags every relayed session transaction with the same code.
-  const walletClient = createWalletClient({
-    account,
-    chain: celo,
-    transport: http(config.rpcUrl)
-  }).extend(withAttribution(config.attributionTag));
-  // Do not call writeContract/sendTransaction from this EOA client: Altana
-  // client.execute is the only safe path for the delegated smart-wallet key.
-  void walletClient;
+  // Value-moving calls and Textile's wallet-bound TakerControl signature use
+  // Altana's session client only; Altana appCode tags every relayed session
+  // transaction. This process holds no EOA signing key.
 
   const { client: altanaClient } = createAltana(config);
   const tokenDecimals = await publicClient.readContract({
@@ -184,7 +172,7 @@ async function main() {
     registry: config.registryAddress,
     pollMs: runOnce ? 0 : POLL_MS,
     runOnce,
-    workerIdentity: account.address,
+    workerIdentity: config.agentAddress,
     maxUsdtDailyCap: maxUsdtDailyCap.toString()
   });
   await run();

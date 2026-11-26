@@ -1,4 +1,5 @@
 import { getAddress, type Address, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { CELO_RPC_DEFAULT } from "@pocket/core";
 
 export type SignerConfig = {
@@ -23,18 +24,36 @@ export function readSignerConfig(env: NodeJS.ProcessEnv = process.env): SignerCo
 }
 
 export type AgentConfig = {
-  privateKey: Hex;
+  /** Public address of the agent identity wallet (ERC-8004 owner). The payment loop never needs its private key. */
+  agentAddress: Address;
   encPrivateKey: Hex;
   rpcUrl: string;
   attributionTag: string;
   registryAddress: Address;
 };
 
-export function readAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
-  const privateKey = (env.AGENT_PRIVATE_KEY ?? "").trim();
-  if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
-    throw new Error("AGENT_PRIVATE_KEY must be a 32-byte 0x-prefixed private key.");
+// The payment loop only reports the agent's public identity. Prefer the public
+// AGENT_ADDRESS so the scheduled workflow never handles the identity key; an
+// AGENT_PRIVATE_KEY is still accepted (address derived, key discarded) for
+// older setups.
+function readAgentAddress(env: NodeJS.ProcessEnv): Address {
+  const rawAddress = (env.AGENT_ADDRESS ?? "").trim();
+  if (rawAddress) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(rawAddress)) throw new Error("AGENT_ADDRESS must be a 0x-prefixed 20-byte address.");
+    return getAddress(rawAddress);
   }
+  const privateKey = (env.AGENT_PRIVATE_KEY ?? "").trim();
+  if (privateKey) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
+      throw new Error("AGENT_PRIVATE_KEY must be a 32-byte 0x-prefixed private key.");
+    }
+    return privateKeyToAccount(privateKey as Hex).address;
+  }
+  throw new Error("AGENT_ADDRESS is required (the agent identity wallet's public address).");
+}
+
+export function readAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
+  const agentAddress = readAgentAddress(env);
 
   const encPrivateKey = (env.AGENT_ENC_PRIVATE_KEY ?? "").trim();
   if (!/^0x[0-9a-fA-F]{64}$/.test(encPrivateKey)) {
@@ -45,7 +64,7 @@ export function readAgentConfig(env: NodeJS.ProcessEnv = process.env): AgentConf
   if (!rawRegistry) throw new Error("REGISTRY_ADDRESS is required after PocketRegistry is deployed.");
 
   return {
-    privateKey: privateKey as Hex,
+    agentAddress,
     encPrivateKey: encPrivateKey as Hex,
     rpcUrl: (env.CELO_RPC ?? "").trim() || CELO_RPC_DEFAULT,
     // Preserve the exact value supplied by the deployment environment. Validation
