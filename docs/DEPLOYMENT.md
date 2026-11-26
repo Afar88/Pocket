@@ -61,7 +61,7 @@ In the repository's **Settings → Secrets and variables → Actions**, add thes
 
 | Secret | Purpose |
 | --- | --- |
-| `AGENT_PRIVATE_KEY` | The agent's single signing key |
+| `AGENT_PRIVATE_KEY` | The agent identity wallet's key. Used only by `register.yml` (ERC-8004 registration). The scheduled `agent.yml` passes the public `AGENT_ADDRESS` instead and never receives this key. |
 | `AGENT_ENC_PRIVATE_KEY` | Private half of the agent encryption keypair |
 
 Add these repository Actions variables:
@@ -81,7 +81,7 @@ Generate the keypair locally with:
 
 Copy the **public** half into Render as `AGENT_ENC_PUBLIC_KEY`. Store the **private** half in the GitHub Actions repository secret `AGENT_ENC_PRIVATE_KEY`. Keep the generated private half out of the repository, Render, build logs, pull requests, and chat.
 
-The agent signing key is separately configured once as the GitHub Actions secret `AGENT_PRIVATE_KEY`. The web app only needs the agent's public encryption key. **Users never generate, copy, or paste a session private key.**
+The agent identity key is configured once as the GitHub Actions secret `AGENT_PRIVATE_KEY` and is read only by the registration workflow; the payment loop uses the public `AGENT_ADDRESS` and signs nothing with an EOA. The web app only needs the agent's public encryption key. **Users never generate, copy, or paste a session private key.**
 
 ## 6. Create a wallet and grant the agent session
 

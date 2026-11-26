@@ -19,7 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      AGENT_PRIVATE_KEY: ${{ secrets.AGENT_PRIVATE_KEY }}
+      # Public identity address only; the identity key stays in register.yml.
+      AGENT_ADDRESS: "0x700E4d3Dd9379fA164AD3E0DeD8fe0731b02f2aE"
       AGENT_ENC_PRIVATE_KEY: ${{ secrets.AGENT_ENC_PRIVATE_KEY }}
       ATTRIBUTION_TAG: ${{ vars.ATTRIBUTION_TAG }}
       REGISTRY_ADDRESS: ${{ vars.REGISTRY_ADDRESS }}
