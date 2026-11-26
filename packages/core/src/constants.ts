@@ -2,6 +2,11 @@ import type { Address } from "viem";
 
 export const CELO_CHAIN_ID = 42220;
 export const CELO_RPC_DEFAULT = "https://forno.celo.org";
+/** Block each known PocketRegistry was deployed in. History scans start here instead of block 0. */
+export const REGISTRY_DEPLOY_BLOCKS: Readonly<Record<string, bigint>> = {
+  // v2 registry, tx 0xa75213bc20550cbc165a8408e1c6ab944b51a7c258a445c9d32482354e0a9265
+  "0xb46f314b52511224bc1efd48636e1428b1585766": 83_819_136n
+};
 export const CELOSCAN_TX = "https://celoscan.io/tx/";
 export const CELOSCAN_ADDRESS = "https://celoscan.io/address/";
 

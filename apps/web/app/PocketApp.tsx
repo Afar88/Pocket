@@ -26,6 +26,7 @@ import {
   CELO_CHAIN_ID,
   CELOSCAN_TX,
   CELO_RPC_DEFAULT,
+  REGISTRY_DEPLOY_BLOCKS,
   CELO_USDT,
   ALTANA_SPEND_INFOS_ABI,
   ERC20_ABI,
@@ -243,9 +244,11 @@ export default function PocketApp() {
       try {
         const ownIds = new Set(own.map((p) => p.id.toString()));
         const paidRows: PaymentRow[] = [], skippedRows: PaymentRow[] = [];
+        // Scan only from the registry's deploy block; older blocks cannot hold its events.
+        const floor = REGISTRY_DEPLOY_BLOCKS[registryAddress.toLowerCase()] ?? 0n;
         let end = latest;
-        while (end >= 0n) {
-          const start = end > 4_999n ? end - 4_999n : 0n;
+        while (end >= floor) {
+          const start = end - floor > 4_999n ? end - 4_999n : floor;
           const [paidLogs, skippedLogs] = await Promise.all([
             publicClient.getLogs({ address: registryAddress, event: POCKET_PAID_EVENT, fromBlock: start, toBlock: end }),
             publicClient.getLogs({ address: registryAddress, event: POCKET_SKIPPED_EVENT, fromBlock: start, toBlock: end })
@@ -260,7 +263,7 @@ export default function PocketApp() {
             transactionIndex: Number(entry.transactionIndex), logIndex: Number(entry.logIndex),
             timestamp: entry.args.timestamp, reasonCode: Number(entry.args.reasonCode)
           });
-          if (start === 0n) break;
+          if (start === floor) break;
           end = start - 1n;
         }
         setPayments([...paidRows, ...skippedRows].sort((a,b) =>
