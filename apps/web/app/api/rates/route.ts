@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 const TARGET_CURRENCY: Record<string, string[]> = {
   NGN: ["NGN"], ARS: ["ARS"], BRL: ["BRL"], MXN: ["MXN"],
-  COP: ["COP", "COPM"], COPM: ["COPM", "COP"],
+  COP: ["COP"], COPM: ["COPM"],
   IDR: ["IDR"], GBP: ["GBP"], CHF: ["CHF"]
 };
 
