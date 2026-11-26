@@ -202,8 +202,9 @@ contract PocketRegistryTest {
         _expectError("session expired");
         vm.prank(agent);
         registry.markPaid(id, payoutToken, 1_000_000, 1_000_000, due, keccak256("expired-payment"));
+        uint8 expiryReason = registry.SKIP_SESSION_EXPIRED();
         vm.prank(agent);
-        registry.skipPocket(id, registry.SKIP_SESSION_EXPIRED());
+        registry.skipPocket(id, expiryReason);
         require(registry.getPocket(id).lastSkippedDue == registry.getPocket(id).nextDue, "expiry skip recorded");
     }
 
@@ -211,12 +212,13 @@ contract PocketRegistryTest {
         uint256 id = _create(1 days);
         _approve(id);
         uint64 due = registry.getPocket(id).nextDue;
+        uint8 rateReason = registry.SKIP_RATE_BELOW_FLOOR();
         vm.prank(agent);
-        registry.skipPocket(id, registry.SKIP_RATE_BELOW_FLOOR());
+        registry.skipPocket(id, rateReason);
         require(registry.getPocket(id).nextDue == due, "skip remains due");
         _expectError("already skipped this period");
         vm.prank(agent);
-        registry.skipPocket(id, registry.SKIP_RATE_BELOW_FLOOR());
+        registry.skipPocket(id, rateReason);
     }
 
     function testOwnerCanRevokeAgent() public {
@@ -224,8 +226,9 @@ contract PocketRegistryTest {
         _approve(id);
         vm.prank(owner);
         registry.approveAgent(id, address(0), bytes32(0), 0, 0, 0, "", "");
+        uint8 noQuoteReason = registry.SKIP_NO_QUOTE();
         _expectError("not approved agent");
         vm.prank(agent);
-        registry.skipPocket(id, registry.SKIP_NO_QUOTE());
+        registry.skipPocket(id, noQuoteReason);
     }
 }
