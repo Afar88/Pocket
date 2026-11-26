@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createClient,
   serializeSession,
+  keyHashForSessionOrKey,
   CELO,
   signerFromPrivateKey, signerFromPasskey } from "@altananetwork/sdk";
 import {
@@ -51,6 +52,7 @@ type PocketView = {
   period: bigint; nextDue: bigint; label: string; note: string; paused: boolean; closed: boolean; deleted: boolean;
   agent: Address; sessionKeyId: Hex; sessionExpiry: bigint; usdtDailyCap: bigint; payoutDailyCap: bigint;
   minOutPerUsdt: bigint; lastSkippedDue: bigint; lastSkippedReason: number;
+  encryptedSessionKey: Hex; serializedSession: string;
 };
 type SessionMeta = {
   publicKey: Hex; keyId: Hex; keyHash: Hex; expiry: number; usdtDailyCap: string;
@@ -68,6 +70,43 @@ const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 const SESSION_SKIP_GRACE_SECONDS = 60 * 60;
 const POCKET_EVENTS_ABI = [POCKET_CREATED_EVENT] as const;
 function shortAddress(value: string): string { return value.length > 12 ? value.slice(0, 6) + "…" + value.slice(-4) : value; }
+// Rebuild the agent key's public details from the newest live pocket
+// approval. Returns null when no pocket carries a live key.
+function sessionFromPockets(pockets: readonly PocketView[]): SessionMeta | null {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const live = pockets
+    .filter((p) => !p.deleted && !p.closed && p.agent !== "0x0000000000000000000000000000000000000000" && p.sessionExpiry > now && p.encryptedSessionKey && p.encryptedSessionKey !== "0x" && p.serializedSession)
+    .sort((a, b) => (a.sessionExpiry > b.sessionExpiry ? -1 : a.sessionExpiry < b.sessionExpiry ? 1 : 0));
+  for (const p of live) {
+    try {
+      const stored = JSON.parse(p.serializedSession) as {
+        publicKey: Hex; expiry: number;
+        permissions?: { calls?: { to: string; signature?: string }[]; spend?: { token?: string; limit: string }[] };
+      };
+      const currencies = new Set(POCKET_CURRENCIES.map((c) => c.address.toLowerCase()));
+      const payoutTokens = (stored.permissions?.calls ?? [])
+        .filter((c) => c.signature === "transfer(address,uint256)" && currencies.has(c.to.toLowerCase()))
+        .map((c) => c.to as Address);
+      const payoutDailyCaps: Record<string, string> = {};
+      for (const limit of stored.permissions?.spend ?? []) {
+        if (limit.token && currencies.has(limit.token.toLowerCase())) payoutDailyCaps[limit.token.toLowerCase()] = limit.limit;
+      }
+      return {
+        publicKey: stored.publicKey,
+        keyId: p.sessionKeyId,
+        keyHash: keyHashForSessionOrKey(stored.publicKey) as Hex,
+        expiry: Number(stored.expiry),
+        usdtDailyCap: p.usdtDailyCap.toString(),
+        payoutDailyCaps,
+        payoutTokens,
+        encryptedSessionKey: p.encryptedSessionKey,
+        serializedSession: p.serializedSession
+      };
+    } catch { /* unreadable record: try the next pocket */ }
+  }
+  return null;
+}
+
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
 const PERIODS = [
@@ -338,6 +377,18 @@ export default function PocketApp() {
         }
       }
       setPockets(own.reverse());
+      // The agent key lives onchain with each pocket it can pay. Rebuild its
+      // details from there, so the grant shows on any phone or browser
+      // signed in to this wallet. No secret is read: the session private key
+      // stays sealed to the agent.
+      const fromChain = sessionFromPockets(own);
+      if (fromChain) {
+        setSessionMeta((current) => {
+          if (current && current.keyId.toLowerCase() === fromChain.keyId.toLowerCase()) return current;
+          window.localStorage.setItem(sessionStorageKey(wallet.address), JSON.stringify(fromChain));
+          return fromChain;
+        });
+      }
       try {
         const ownIds = new Set(own.map((p) => p.id.toString()));
         const paidRows: PaymentRow[] = [], skippedRows: PaymentRow[] = [];
