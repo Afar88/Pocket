@@ -27,7 +27,14 @@ export const ALTANA_KEYSTORE = "0x83b30935f36d6ccf9B1ec3b5E47F2866b97cd27c" as A
 
 export type PocketCurrency = {
   code: string; name: string; symbol: string; address: Address; decimals: number; isUsdt: boolean;
+  /** False when Textile has no seller for it (no ask, no volume), so new pockets can't use it. */
+  payable?: boolean;
 };
+
+/** Highest USDT a session key may spend per day, shared by all its pockets. */
+export const MAX_USDT_DAILY_CAP = "100";
+/** Daily-limit choices offered when granting a key. */
+export const USDT_DAILY_CAP_CHOICES = ["1", "5", "10", "25", "50", "100"] as const;
 
 export const POCKET_CURRENCIES: readonly PocketCurrency[] = [
   { code: "USD", name: "US Dollar", symbol: "USDT", address: CELO_USDT, decimals: 6, isUsdt: true },
@@ -38,8 +45,8 @@ export const POCKET_CURRENCIES: readonly PocketCurrency[] = [
   { code: "COP", name: "Colombian Peso (wrapped)", symbol: "wCOP", address: "0x8a1D45e102e886510e891d2Ec656a708991e2D76" as Address, decimals: 18, isUsdt: false },
   { code: "COPM", name: "Colombian Peso", symbol: "COPM", address: "0xC92E8Fc2947E32F2B574CCA9F2F12097A71d5606" as Address, decimals: 18, isUsdt: false },
   { code: "IDR", name: "Indonesian Rupiah", symbol: "IDRX", address: "0x18Bc5bcC660cf2B9cE3cd51a404aFe1a0cBD3C22" as Address, decimals: 2, isUsdt: false },
-  { code: "GBP", name: "British Pound", symbol: "VGBP", address: "0x7aE4265eCfc1F31bc0e112DfcFE3D78E01f4BB7f" as Address, decimals: 18, isUsdt: false },
-  { code: "CHF", name: "Swiss Franc", symbol: "VCHF", address: "0xc5eBeA9984c485EC5D58cA5a2D376620d93aF871" as Address, decimals: 18, isUsdt: false }
+  { code: "GBP", name: "British Pound", symbol: "VGBP", address: "0x7aE4265eCfc1F31bc0e112DfcFE3D78E01f4BB7f" as Address, decimals: 18, isUsdt: false, payable: false },
+  { code: "CHF", name: "Swiss Franc", symbol: "VCHF", address: "0xc5eBeA9984c485EC5D58cA5a2D376620d93aF871" as Address, decimals: 18, isUsdt: false, payable: false }
 ] as const;
 
 export function currencyByToken(address: string): PocketCurrency | undefined {
