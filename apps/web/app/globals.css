@@ -6,7 +6,7 @@
   --muted-strong: #c2ccda; --shadow: 0 16px 38px rgba(0, 0, 0, .22);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: var(--navy); color: var(--ink); }
+html, body { margin: 0; min-height: 100%; overflow-x: hidden; background: var(--navy); color: var(--ink); }
 body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, select, textarea { font: inherit; } button { cursor: pointer; }
 a { color: #ff8c96; text-decoration: none; } a:hover { color: #ffc0c5; text-decoration: underline; }
@@ -93,19 +93,21 @@ button.danger { background: #7d2936; border: 1px solid #b4404c; box-shadow: none
 /* Tap-to-open help */
 .info { position: relative; display: inline-flex; vertical-align: middle; margin-left: 6px; }
 .info-button, .info-button:hover { box-shadow: none; width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 50%; border: 1px solid var(--red); background: transparent; color: var(--red); font: 600 12px/1 inherit; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.info-pop { position: absolute; z-index: 20; top: 26px; left: -8px; width: min(280px, 78vw); background: var(--navy-deep); border: 1px solid var(--red); border-radius: 10px; padding: 10px 12px; color: #e5c6cc; font-size: 12px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; box-shadow: 0 8px 24px rgba(0,0,0,.45); word-break: break-word; }
+.info-pop { position: fixed; z-index: 45; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(340px, calc(100vw - 32px)); box-sizing: border-box; background: var(--navy-deep); border: 1px solid var(--red); border-radius: 14px; padding: 12px 14px; color: #e5c6cc; font-size: 13px; font-weight: 400; line-height: 1.5; text-transform: none; letter-spacing: normal; box-shadow: 0 10px 30px rgba(0,0,0,.55); overflow-wrap: anywhere; text-align: left; }
 
 /* Roo, the mascot */
 .mascot { position: relative; display: flex; flex-direction: column; align-items: center; margin: 4px 0 16px; }
-.mascot-button, .mascot-button:hover { background: radial-gradient(circle at 50% 55%, #1d3a60 0%, #11233d 55%, transparent 72%); border: 0; box-shadow: none; padding: 8px 24px 0; min-height: 0; border-radius: 50%; }
+.mascot-button, .mascot-button:hover { position: relative; background: radial-gradient(circle at 50% 55%, #1d3a60 0%, #11233d 55%, transparent 72%); border: 0; box-shadow: none; padding: 8px 24px 0; min-height: 0; border-radius: 50%; }
 .mascot-button img { display: block; width: auto; height: 150px; animation: roo-bob 3.2s ease-in-out infinite; }
-.mascot-hint { margin-top: 6px; font-size: 12px; color: var(--muted); }
-.mascot-bubble { position: relative; width: min(340px, 92vw); margin-bottom: 12px; padding: 14px 16px 6px; background: var(--panel-raised); border: 1px solid var(--red); border-radius: 18px; box-shadow: var(--shadow); }
-.mascot-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px; background: var(--panel-raised); border-right: 1px solid var(--red); border-bottom: 1px solid var(--red); transform: translateX(-50%) rotate(45deg); }
-.mascot-bubble strong { color: #ffc0c5; font-size: 15px; } .mascot-bubble p { margin: 6px 0 10px; font-size: 13px; color: var(--muted-strong); }
-.mascot-close, .mascot-close:hover { position: absolute; top: 6px; right: 8px; min-height: 0; padding: 2px 8px; background: transparent; border: 0; box-shadow: none; color: var(--muted); font-size: 18px; }
+.tap-sign { position: absolute; top: 18px; right: -18px; padding: 5px 10px; border-radius: 999px; background: var(--red); color: #fff4f5; font-size: 12px; font-weight: 800; transform: rotate(8deg); box-shadow: 0 4px 12px rgba(240,68,82,.35); animation: tap-pulse 1.6s ease-in-out infinite; }
+.thought, .thought:hover { position: relative; display: grid; place-items: center; gap: 4px; width: min(240px, 72vw); aspect-ratio: 1.45 / 1; margin-bottom: 26px; padding: 22px 26px; border-radius: 50%; background: var(--panel-raised); border: 1px solid var(--red); box-shadow: var(--shadow); color: var(--ink); font-weight: 600; text-align: center; min-height: 0; animation: thought-in .25s ease-out; }
+.thought-text { font-size: 13px; line-height: 1.4; } .thought-count { font-size: 10px; color: var(--muted); }
+.thought-dot { position: absolute; border-radius: 50%; background: var(--panel-raised); border: 1px solid var(--red); }
+.thought-dot.one { width: 16px; height: 16px; bottom: -14px; left: 46%; } .thought-dot.two { width: 9px; height: 9px; bottom: -26px; left: 52%; }
+@keyframes tap-pulse { 0%, 100% { transform: rotate(8deg) scale(1); } 50% { transform: rotate(8deg) scale(1.08); } }
+@keyframes thought-in { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
 @keyframes roo-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-@media (prefers-reduced-motion: reduce) { .mascot-button img { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .mascot-button img, .tap-sign, .thought { animation: none; } }
 
 /* Bottom menu */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); background: rgba(5, 13, 27, .96); border-top: 1px solid var(--line); backdrop-filter: blur(8px); }
