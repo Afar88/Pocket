@@ -149,7 +149,7 @@ export default function PocketApp() {
   const [firstDue, setFirstDue] = useState(toLocalInput(Date.now() + 5 * 60_000));
 
   const [usdtCap, setUsdtCap] = useState("5");
-  const [expiryDays, setExpiryDays] = useState("30");
+  const [expiryDays, setExpiryDays] = useState("90");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRecipient, setEditRecipient] = useState("");
@@ -421,10 +421,7 @@ export default function PocketApp() {
       const due = dueFromInput(firstDue, "first payment time");
       if (amountRaw > parseUnits("5", usdtDecimals)) throw new Error("Keep each pocket at or below 5 USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
-      const alreadyGrantedCap = pockets
-        .filter((p) => !p.deleted && !p.closed && p.payoutToken.toLowerCase() === payoutToken.toLowerCase())
-        .reduce((total, p) => total + p.payoutDailyCap, 0n);
-      const attachSession = Boolean(sessionMeta?.encryptedSessionKey && sessionMeta.serializedSession && sessionMeta.expiry > Math.floor(Date.now() / 1000) && sessionMeta.payoutTokens?.some((token) => token.toLowerCase() === payoutToken.toLowerCase()) && BigInt(sessionMeta.payoutDailyCaps?.[payoutToken.toLowerCase()] ?? "0") >= alreadyGrantedCap + payoutCapRaw);
+      const attachSession = keyCovers(payoutToken, payoutCapRaw);
       beginProgress("Create pocket", ["Saving pocket to Celo", "Confirming pocket receipt", ...(attachSession ? ["Attaching session to pocket"] : [])]);
       const createHash = await sendOwnerCalls([{
         to: registry,
@@ -476,7 +473,7 @@ export default function PocketApp() {
         }]);
       }
       setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate("");
-      if (!attachSession && sessionMeta) setMessage("Pocket saved. Revoke the current key and grant a new session to include this currency and payout cap.");
+      if (!attachSession && sessionMeta) setMessage("Pocket saved. Your agent key doesn't cover it. Grant a new key to include it.");
       await refresh();
       finishProgress();
     } catch (reason) {
@@ -571,6 +568,50 @@ export default function PocketApp() {
     } finally { setBusy(false); }
   }
 
+  // True when the saved agent key can pay a pocket in this currency with
+  // this daily payout cap. The key's own per-currency cap is the limit; the
+  // USDT cap bounds total spend across pockets.
+  function keyCovers(token: Address, payoutDailyCap: bigint): boolean {
+    if (!sessionMeta?.encryptedSessionKey || !sessionMeta.serializedSession) return false;
+    if (sessionMeta.expiry - SESSION_SKIP_GRACE_SECONDS <= Math.floor(Date.now() / 1000)) return false;
+    const key = token.toLowerCase();
+    if (!sessionMeta.payoutTokens?.some((t) => t.toLowerCase() === key)) return false;
+    return BigInt(sessionMeta.payoutDailyCaps?.[key] ?? "0") >= payoutDailyCap;
+  }
+
+  async function giveAgentAccess(p: PocketView) {
+    setBusy(true); setError("");
+    try {
+      const { activeWallet, registry } = requireWriteSetup();
+      if (!sessionMeta || !keyCovers(p.payoutToken, p.payoutDailyCap)) throw new Error("Your agent key doesn't cover this pocket. Grant a new key.");
+      beginProgress("Give agent access", ["Adding pocket to agent key"]);
+      await sendOwnerCalls([{
+        to: registry,
+        data: encodeFunctionData({
+          abi: POCKET_REGISTRY_ABI,
+          functionName: "approveAgent",
+          args: [
+            p.id,
+            activeWallet.address as Address,
+            sessionMeta.keyId,
+            BigInt(sessionMeta.expiry - SESSION_SKIP_GRACE_SECONDS),
+            BigInt(sessionMeta.usdtDailyCap),
+            p.payoutDailyCap,
+            sessionMeta.encryptedSessionKey,
+            sessionMeta.serializedSession
+          ]
+        }),
+        value: 0n
+      }]);
+      setMessage("Agent can now pay this pocket.");
+      await refresh();
+      finishProgress();
+    } catch (reason) {
+      stopProgress();
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setBusy(false); }
+  }
+
   async function grantSession() {
     setBusy(true); setError("");
     try {
@@ -585,11 +626,37 @@ export default function PocketApp() {
       const usdtLimit = parseUnits(usdtCap, usdtDecimals);
       if (usdtLimit <= 0n || usdtLimit > parseUnits("5", usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than 5.");
       const activePockets = ownPockets.filter((p) => !p.deleted && !p.closed);
-      const payoutTokens = [...new Set(activePockets.map((p) => p.payoutToken))];
-      const payoutDailyCaps: Record<string, bigint> = {};
+      const existingCaps: Record<string, bigint> = {};
       for (const p of activePockets) {
         const key = p.payoutToken.toLowerCase();
-        payoutDailyCaps[key] = (payoutDailyCaps[key] ?? 0n) + p.payoutDailyCap;
+        existingCaps[key] = (existingCaps[key] ?? 0n) + p.payoutDailyCap;
+      }
+      // Cover every Pocket currency, not only today's pockets, so pockets
+      // added later can use this key with no new grant (and no new Altana
+      // fee). The USDT cap bounds real spend; each currency's cap is set to
+      // twice the USDT cap at the current Textile rate, so it never binds
+      // first unless the rate doubles. A currency with no rate and no
+      // pocket is left out and needs a new key.
+      const payoutDailyCaps: Record<string, bigint> = {};
+      const payoutTokens: Address[] = [];
+      for (const currency of POCKET_CURRENCIES) {
+        const key = currency.address.toLowerCase();
+        const existing = existingCaps[key] ?? 0n;
+        let ceiling = 0n;
+        if (currency.isUsdt) {
+          ceiling = usdtLimit;
+        } else {
+          try {
+            const response = await fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" });
+            if (response.ok) {
+              const { bid } = await response.json() as { bid: string };
+              const perUsdt = parseUnits(Number(bid).toFixed(currency.decimals), currency.decimals);
+              ceiling = (perUsdt * usdtLimit * 2n) / 10n ** BigInt(usdtDecimals);
+            }
+          } catch { /* no rate: fall back to existing pockets only */ }
+        }
+        const cap = existing > ceiling ? existing : ceiling;
+        if (cap > 0n) { payoutTokens.push(currency.address); payoutDailyCaps[key] = cap; }
       }
       const permissions = buildPocketSessionPolicy({ registryAddress: registry, usdtDailyCap: usdtLimit, payoutTokens, payoutDailyCaps });
       beginProgress("Grant session key", ["Granting session key", "Approving Textile signature checks", "Saving session limits to Celo"]);
@@ -785,7 +852,7 @@ export default function PocketApp() {
           </div>
           <label>Key expires in days</label>
           <select value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)}>
-            <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option>
+            <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option><option value="365">1 year</option>
           </select>
           <div className="notice">
             Allowed calls are method-limited: transfer only on selected payout tokens, USDT approval to Textile for conversions, and PocketRegistry payment/skip marks. Owner-only edits are not allowed. The USDT cap includes Altana relay fees. The session key is encrypted to the agent and is never shown or stored here.
@@ -804,6 +871,9 @@ export default function PocketApp() {
             <div className="pocket-top"><div className="pocket-title"><span className="eyebrow">POCKET <code>#{p.id.toString()}</code></span><h3>{p.label}</h3></div><span className={"status-pill " + (pocketStatus(p) === "Paused" ? "paused" : pocketStatus(p) === "Active" ? "active" : pocketStatus(p) === "Session expired" ? "expired" : "unassigned")}>{pocketStatus(p)}</span></div>
             <div className="pocket-amount"><span>Sender spends</span><strong className="mono">{formatUnits(p.amountUsdt, usdtDecimals)} USDT</strong></div>
             <div className="pocket-facts"><div><span>Receiver gets</span><strong>{POCKET_CURRENCIES.find((currency)=>currency.address.toLowerCase()===p.payoutToken.toLowerCase())?.symbol ?? "Unknown"}</strong></div><div><span>Recipient</span><code>{shortAddress(p.recipient)}</code></div><div><span>Frequency</span><strong>{periodText(p.period)}</strong></div><div><span>Next payout</span><strong>{p.closed?"Completed":dateText(p.nextDue)}</strong></div><div><span>Note</span><strong>{p.note || "—"}</strong></div><div><span>Rate floor</span><strong>{p.minOutPerUsdt>0n?formatUnits(p.minOutPerUsdt,18)+" / USDT":"Off"}</strong></div></div>
+            {sessionMeta && !p.deleted && !p.closed && p.sessionKeyId.toLowerCase() !== sessionMeta.keyId.toLowerCase() && (keyCovers(p.payoutToken, p.payoutDailyCap)
+              ? <div className="notice">Agent can't pay this pocket yet. <button className="secondary" disabled={busy || !readyForWrites} onClick={()=>void giveAgentAccess(p)}>Give agent access</button></div>
+              : <div className="notice">Agent key doesn't cover this pocket. Grant a new key.</div>)}
             {p.minOutPerUsdt>0n && p.lastSkippedDue===p.nextDue && p.lastSkippedReason===1 && <div className="notice">Held: rate below your floor. <button className="secondary" disabled={busy || !readyForWrites} onClick={()=>void lowerFloor(p)}>Lower floor</button></div>}
             {editingId === p.id.toString() ? (
               <div>
