@@ -144,6 +144,7 @@ export default function PocketApp() {
   }
   const [walletPending, setWalletPending] = useState(false);
   const [usdtBalance, setUsdtBalance] = useState("—");
+  const [celoBalance, setCeloBalance] = useState("—");
   const [usdtDecimals, setUsdtDecimals] = useState(6);
   const [spendMeter, setSpendMeter] = useState<{ used: bigint; cap: bigint } | null>(null);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
@@ -318,6 +319,9 @@ export default function PocketApp() {
         publicClient.readContract({ address: registryAddress, abi: POCKET_REGISTRY_ABI, functionName: "pocketCount" }),
         publicClient.getBlockNumber()
       ]);
+      publicClient.getBalance({ address: wallet.address })
+        .then((wei: bigint) => setCeloBalance(Number(formatUnits(wei, 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })))
+        .catch(() => setCeloBalance("—"));
       setUsdtDecimals(Number(tokenDecimals));
       setUsdtBalance(formatUnits(balance, Number(tokenDecimals)));
 
@@ -850,6 +854,7 @@ export default function PocketApp() {
         <div>
           <p className="small">USDt in your Altana wallet</p>
           <div className="balance">{usdtBalance === "—" ? "—" : usdtBalance + " USDt"}</div>
+          {wallet && <p className="meta">CELO for fees: {celoBalance === "—" ? "—" : celoBalance + " CELO"}</p>}
           <p className="sub">Funds stay in your wallet until a pocket is due.</p>
           {wallet && <p className="meta">Wallet: <code>{wallet.address}</code> <button type="button" className="secondary" onClick={() => void copyAddress(wallet.address)}>{copied ? "Copied" : "Copy"}</button></p>}
           {wallet && walletPending && <div className="notice">Not active yet. Add a little USDt{setupFee ? ", plus about " + setupFee.celo + " CELO (about $" + setupFee.usd + ") for Altana's one-time setup" : ", plus CELO for Altana's one-time setup"}. Then create a pocket here. Until then, only this browser can open this wallet.</div>}
