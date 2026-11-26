@@ -122,6 +122,8 @@ The command below is deliberately not run by the build or deployment workflow. I
 
     npm run register:agent
 
+Pocket's registry payment cutoff is set one hour before the Altana SDK key expiry. That hour is reserved for the still-valid Altana session to publish the agent-only `session_expired` skip event; payment marks are already blocked by the registry during that window.
+
 The current script registers the `AGENT_PRIVATE_KEY` EOA as the ERC-8004 identity owner, not the user's Altana smart-wallet address. Check `OPEN_QUESTIONS.md` before running it if the identity should belong to the smart wallet instead.
 
 ## Safety notes

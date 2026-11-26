@@ -63,6 +63,7 @@ type PaymentRow = {
 type ProgressStep = { label: string; state: "pending" | "active" | "done" | "stopped" };
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
+const SESSION_SKIP_GRACE_SECONDS = 60 * 60;
 const POCKET_EVENTS_ABI = [POCKET_CREATED_EVENT] as const;
 function shortAddress(value: string): string { return value.length > 12 ? value.slice(0, 6) + "…" + value.slice(-4) : value; }
 const sessionStorageKey = (walletAddress: string) =>
@@ -378,7 +379,7 @@ export default function PocketApp() {
               createdId,
               wallet.address as Address,
               sessionMeta.keyId,
-              BigInt(sessionMeta.expiry),
+              BigInt(sessionMeta.expiry - SESSION_SKIP_GRACE_SECONDS),
               BigInt(sessionMeta.usdtDailyCap),
               payoutCapRaw,
               sessionMeta.encryptedSessionKey,
@@ -494,6 +495,8 @@ export default function PocketApp() {
       const secret = generatePrivateKey();
       const sessionSigner = signerFromPrivateKey(secret);
       const expiry = Math.floor(Date.now() / 1000) + Number(expiryDays) * 86_400;
+      const registryPaymentCutoff = expiry - SESSION_SKIP_GRACE_SECONDS;
+      if (registryPaymentCutoff <= Math.floor(Date.now() / 1000)) throw new Error("Choose a session expiry more than one hour from now.");
       const usdtLimit = parseUnits(usdtCap, usdtDecimals);
       if (usdtLimit <= 0n || usdtLimit > parseUnits("5", usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than 5.");
       const activePockets = ownPockets.filter((p) => !p.deleted && !p.closed);
@@ -557,7 +560,7 @@ export default function PocketApp() {
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "approveAgent",
-          args: [p.id, activeWallet.address as Address, session.keyId, BigInt(expiry), usdtLimit, p.payoutDailyCap, encryptedSessionKey, serializedSession]
+          args: [p.id, activeWallet.address as Address, session.keyId, BigInt(registryPaymentCutoff), usdtLimit, p.payoutDailyCap, encryptedSessionKey, serializedSession]
         }),
         value: 0n
       }));

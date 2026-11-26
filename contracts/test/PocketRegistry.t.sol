@@ -41,8 +41,9 @@ contract PocketRegistryTest {
     }
 
     function _approve(uint256 id) private {
+        uint128 payoutCap = registry.getPocket(id).payoutDailyCap;
         vm.prank(owner);
-        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, 5_000_000, sealedKey, storedSession);
+        registry.approveAgent(id, agent, keyId, uint64(block.timestamp + 30 days), 5_000_000, payoutCap, sealedKey, storedSession);
     }
 
     function testCreateStoresOnlyRulesAndPublicNote() public {

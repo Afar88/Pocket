@@ -60,7 +60,7 @@ export async function createPocketSession(
   if (derivedKeyId.toLowerCase() !== pocket.sessionKeyId.toLowerCase()) {
     throw new Error("Stored session key does not match the session key approved for this pocket.");
   }
-  if (pocket.sessionExpiry <= BigInt(Math.floor(Date.now() / 1000))) {
+  if (session.expiry <= Math.floor(Date.now() / 1000)) {
     throw new Error("Altana session expiry has passed.");
   }
 
