@@ -34,7 +34,6 @@ export type FirmQuote = {
   takerPays: bigint;
   buyAmount: bigint;
   expiresAt: string;
-  approval: TxRequest;
   swap: TxRequest;
 };
 

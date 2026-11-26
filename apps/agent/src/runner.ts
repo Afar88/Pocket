@@ -45,6 +45,17 @@ function requireConfirmed(result: ExecuteResult, action: string): Hex {
   return result.transactionHash;
 }
 
+const approveAbi = [{
+  type: "function",
+  name: "approve",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "spender", type: "address" },
+    { name: "amount", type: "uint256" }
+  ],
+  outputs: [{ name: "", type: "bool" }]
+}] as const;
+
 const transferAbi = [{
   type: "function",
   name: "transfer",
@@ -52,6 +63,11 @@ const transferAbi = [{
   inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
   outputs: [{ name: "", type: "bool" }]
 }] as const;
+
+const allowedSwapSelectors = new Set([
+  keccak256(toHex("execute((bytes,bytes))")).slice(0, 10).toLowerCase(),
+  keccak256(toHex("executeBatch((bytes,bytes)[])")).slice(0, 10).toLowerCase()
+]);
 
 export async function runDuePockets(deps: RunnerDeps, attributionTag: string): Promise<void> {
   if (!attributionTag.trim()) {
@@ -89,47 +105,50 @@ export async function runDuePockets(deps: RunnerDeps, attributionTag: string): P
       if (quote.reactor.toLowerCase() !== TEXTILE_REACTOR.toLowerCase()) {
         throw new Error("Textile returned an unrecognised reactor address; refusing to execute.");
       }
-      if (quote.approval.to.toLowerCase() !== CELO_USDT.toLowerCase()) {
-        throw new Error("Textile approval target is not the documented Celo USDt token.");
-      }
       if (quote.swap.to.toLowerCase() !== TEXTILE_REACTOR.toLowerCase()) {
         throw new Error("Textile swap target is not the documented Celo reactor.");
       }
-      if (quote.approval.chainId !== 42220 || quote.swap.chainId !== 42220) {
-        throw new Error("Textile returned a transaction for a non-Celo-mainnet chain.");
+      if (quote.swap.chainId !== 42220) {
+        throw new Error("Textile returned a swap transaction for a non-Celo-mainnet chain.");
       }
-      if (quote.takerPays <= 0n || quote.takerPays > pocket.amountUsdt) {
-        throw new Error("Textile quote exceeds the pocket's maximum USDt amount.");
+
+      const selector = quote.swap.data.length >= 10
+        ? quote.swap.data.slice(0, 10).toLowerCase()
+        : quote.swap.data.toLowerCase();
+      if (!allowedSwapSelectors.has(selector)) {
+        throw new Error(
+          "Textile swap calldata selector " + (selector || "<missing>") +
+          " is not allowed; expected execute((bytes,bytes)) or executeBatch((bytes,bytes)[])."
+        );
+      }
+
+      if (quote.takerPays <= 0n || quote.takerPays > pocket.amountUsdt || quote.takerPays > deps.maxUsdtDailyCap) {
+        throw new Error("Textile quote exceeds the pocket's maximum USDt amount or the 5 USDt safety ceiling.");
       }
       if (quote.buyAmount <= 0n || quote.buyAmount > pocket.cngnDailyCap) {
         throw new Error("Textile cNGN output exceeds the recorded daily session cap.");
       }
-      if (deps.now() >= Date.parse(quote.expiresAt)) {
-        throw new Error("Textile quote expired before execution.");
+
+      const quoteExpiry = Date.parse(quote.expiresAt);
+      if (!Number.isFinite(quoteExpiry) || deps.now() >= quoteExpiry) {
+        throw new Error("Textile quote is invalid or expired before execution.");
       }
 
-      const currentAllowance = await deps.allowance(pocket.agent, quote.reactor);
+      const currentAllowance = await deps.allowance(pocket.agent, TEXTILE_REACTOR);
+      const batchCalls: { to: Address; data: Hex; value: bigint }[] = [];
+
+      // Textile's approval payload is intentionally ignored. If needed, Pocket
+      // builds an exact allowance for this quote and includes it in settlement.
       if (currentAllowance < quote.takerPays) {
-        const approvalHash = requireConfirmed(
-          await deps.execute(pocket, [call(quote.approval)]),
-          "USDt approval"
-        );
-        deps.logger.info("USDt approval confirmed: " + CELOSCAN_TX + approvalHash);
-        if (!checkedFirstTransaction) {
-          try {
-            const present = await deps.verifyAttribution(approvalHash);
-            deps.logger.info("First transaction attribution check", { present });
-          } catch (error) {
-            deps.logger.warn("Attribution verification request failed after confirmed approval.", {
-              error: error instanceof Error ? error.message : String(error)
-            });
-          }
-          checkedFirstTransaction = true;
-        }
-      }
-
-      if (deps.now() >= Date.parse(quote.expiresAt)) {
-        throw new Error("Textile quote expired while waiting for approval; no swap was sent.");
+        batchCalls.push({
+          to: CELO_USDT,
+          data: encodeFunctionData({
+            abi: approveAbi,
+            functionName: "approve",
+            args: [TEXTILE_REACTOR, quote.takerPays]
+          }),
+          value: 0n
+        });
       }
 
       const txRef = keccak256(toHex(quote.rfqId));
@@ -149,21 +168,28 @@ export async function runDuePockets(deps: RunnerDeps, attributionTag: string): P
         args: [pocket.id, txRef]
       });
 
-      // One Altana session batch: swap, recipient transfer, swap event, paid event.
-      // Any revert rolls back all four calls, leaving nextDue unchanged.
+      batchCalls.push(
+        call(quote.swap),
+        { to: CNGN, data: payoutData, value: 0n },
+        { to: deps.registryAddress, data: recordSwapData, value: 0n },
+        { to: deps.registryAddress, data: markPaidData, value: 0n }
+      );
+
+      // Re-check expiry after the allowance read and call encoding. Every action
+      // for this settlement (including a needed approval) is one Altana batch.
+      if (deps.now() >= quoteExpiry) {
+        throw new Error("Textile quote expired before the Altana settlement batch; no transaction was sent.");
+      }
+
       const settlementHash = requireConfirmed(
-        await deps.execute(pocket, [
-          call(quote.swap),
-          { to: CNGN, data: payoutData, value: 0n },
-          { to: deps.registryAddress, data: recordSwapData, value: 0n },
-          { to: deps.registryAddress, data: markPaidData, value: 0n }
-        ]),
+        await deps.execute(pocket, batchCalls),
         "Textile swap, cNGN payout, and PocketRegistry update"
       );
 
       deps.logger.info("Textile swap confirmed: " + CELOSCAN_TX + settlementHash, {
         pocketId: pocket.id.toString(),
-        buyAmount: quote.buyAmount.toString()
+        buyAmount: quote.buyAmount.toString(),
+        approvalIncluded: currentAllowance < quote.takerPays
       });
       deps.logger.info("cNGN payment confirmed: " + CELOSCAN_TX + settlementHash, {
         pocketId: pocket.id.toString(),

@@ -8,6 +8,7 @@ import {
 } from "@altananetwork/sdk";
 import {
   ALTANA_KEYSTORE,
+  CELO_CHAIN_ID,
   ALTANA_KEYSTORE_ABI,
   openSealed
 } from "@pocket/core";
@@ -88,7 +89,14 @@ export async function executeSessionCalls(
   session: AgentSession,
   calls: readonly { to: Address; data: Hex; value: bigint }[]
 ): Promise<ExecuteResult> {
-  const result = await client.execute({ session, calls: [...calls], chainId: 42220 });
+  if (calls.length === 0) throw new Error("Refusing to submit an empty Altana session batch.");
+  // Keep all settlement calls in this one SDK execution. Splitting the array
+  // into multiple execute calls would break approval + payment atomicity.
+  const result = await client.execute({
+    session,
+    calls: calls.map(({ to, data, value }) => ({ to, data, value })),
+    chainId: CELO_CHAIN_ID
+  });
   return {
     status: result.status,
     transactionHash: result.transactionHash
