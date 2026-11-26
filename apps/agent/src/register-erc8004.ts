@@ -73,7 +73,7 @@ async function registerIdentity() {
   const registration = {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "Pocket Agent",
-    description: "A Celo mainnet agent that executes owner-approved recurring USDt to cNGN payments through Altana session keys and Textile FX."
+    description: "recurring and one-off USDT payouts in the receiver's local stablecoin"
   };
   const encoded = Buffer.from(JSON.stringify(registration)).toString("base64");
   const agentURI = "data:application/json;base64," + encoded;

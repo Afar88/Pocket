@@ -23,21 +23,18 @@ Run the local tests:
 
 The agent tests use injected mock quote, session-check, and execution dependencies. They do not connect to Textile, Altana relay, or Celo.
 
-## 2. Deploy PocketRegistry on Celo mainnet
+## 2. Deploy the new PocketRegistry from the phone page
 
-The contract has no constructor arguments and holds no funds. It stores payment instructions only.
+The v2 registry is a fresh deployment. It stores payment rules only and holds no funds. Build the branch and commit `deploy/registry.bytecode` before using the deploy page.
 
-Set a local shell variable for the deployment key. Do not put it in .env, source control, a command file, or a chat message.
+1. Open the GitHub Pages deploy page in the MetaMask mobile browser.
+2. Connect the wallet and switch to Celo mainnet (chain ID 42220).
+3. Tap **Deploy to Celo mainnet** and confirm the deployment transaction in your wallet.
+4. Copy the deployed contract address from the result card. Verify the transaction and contract address on Celoscan.
+5. In GitHub repository **Settings → Secrets and variables → Actions → Variables**, update `REGISTRY_ADDRESS` to the new address.
+6. In Render, open the `pocket-web` service and update its `REGISTRY_ADDRESS` environment variable to the same address. Save the change, but do not assume production has updated until you intentionally deploy the web service.
 
-    export CELO_RPC="https://forno.celo.org"
-    export DEPLOYER_PRIVATE_KEY="0x..." # local shell only; never commit
-    cast chain-id --rpc-url "$CELO_RPC"
-    forge create contracts/src/PocketRegistry.sol:PocketRegistry \
-      --rpc-url "$CELO_RPC" \
-      --private-key "$DEPLOYER_PRIVATE_KEY" \
-      --broadcast
-
-Confirm the RPC reports 42220, save the deployed address, and inspect the deployment transaction on https://celoscan.io. There is no registry address committed to this repository: every deployer gets a different address. This command is an operator-run deployment step; it is not run by CI or the hosting configuration.
+Do not reuse the previous v1 registry address: the v2 Pocket ABI and storage layout are different. Deployment is an operator action from the phone page; CI does not submit this transaction.
 
 ## 3. Configure the Pocket web service on Render
 
@@ -98,7 +95,9 @@ The agent signing key is separately configured once as the GitHub Actions secret
 
 The web app uses the configured public encryption key to protect session material for the agent. Neither the agent signing private key nor the encryption private key is shown to users.
 
-The USDt session cap is hard-limited to 5 USDt per day in this MVP. Altana relay fees also consume the session's spend allowance, so leave headroom. The agent independently checks the stored owner, session key ID, and live Keystore status before quoting or paying.
+The USDT session cap is hard-limited to 5 USDT per day by the web flow. Per-payout-token session caps are assembled from the active pocket rules. Altana relay fees also consume the session's spend allowance, so leave headroom. The agent independently checks the stored owner, session key ID, and live Keystore status before quoting or paying.
+
+**First transaction rule:** the first transaction from a newly created Altana wallet must go through Altana's relay (for example, the first `grantSession` / `execute` flow). Do not try to initialize the wallet by sending a direct transaction from an unrelated EOA or by bypassing the relay.
 
 ## 7. Supervise the first live payment yourself
 
@@ -106,13 +105,13 @@ Do not enable unattended payments until you have checked the Textile and Altana 
 
 For the first payment:
 
-1. Confirm the scheduled or manually triggered agent run sees the expected due pocket.
-2. Confirm the Textile RFQ is for Celo chain ID 42220, USDt to cNGN, the expected Altana smart-wallet taker, and the documented Textile reactor.
-3. Confirm the firm quote amount, output, and expiry.
-4. Watch for a separate USDt approval only if the current allowance is too low.
-5. Verify the swap and cNGN payout transaction from the run log's Celoscan link.
+1. Confirm the scheduled agent run sees the expected due pocket.
+2. For a non-USDT pocket, confirm the Textile RFQ is for Celo chain ID 42220, USDT to the pocket's selected payout token, the expected Altana smart-wallet taker, and the documented Textile reactor. For a USDT pocket, confirm there is no Textile request.
+3. For a converted payment, confirm the firm quote amount, output, and expiry.
+4. Watch for an exact USDT approval only if the current allowance is too low. Approval, swap, payout, and markPaid belong in one Altana batch.
+5. Verify the payout token transfer and PocketPaid event from the run log's Celoscan link.
 6. Check the attribution entry with verifyTx; the agent logs the returned codes and whether your tag was present.
-7. Confirm the PocketSwap and PocketPaid events and that nextDue advanced by one period.
+7. Confirm PocketPaid (or PocketSkipped with its reason code) and inspect the updated nextDue or one-off closed state.
 8. Revoke the session from the UI and confirm subsequent runs skip the pocket.
 
 Do not treat an agent log as proof of payment by itself. Verify the transaction receipt, recipient cNGN balance, registry events, and session status onchain.
@@ -137,6 +136,6 @@ The current script registers the `AGENT_PRIVATE_KEY` EOA as the ERC-8004 identit
 
 Everything below runs from a phone browser and the repo's Actions tab.
 
-1. **Deploy the registry**: open the GitHub Pages deploy page (`https://<owner>.github.io/<repo>/`) in the MetaMask mobile browser, connect, switch to Celo mainnet, and tap Deploy. Copy the contract address into the repo variable `REGISTRY_ADDRESS`.
+1. **Deploy the v2 registry**: after confirming `deploy/registry.bytecode` is rebuilt from the v2 contract, open the GitHub Pages deploy page (`https://<owner>.github.io/<repo>/`) in the MetaMask mobile browser, connect, switch to Celo mainnet, and tap Deploy. Copy the contract address into GitHub Actions variable `REGISTRY_ADDRESS` and Render `pocket-web` `REGISTRY_ADDRESS`.
 2. **Make the encryption key pair**: open the `keys.html` page linked from the deploy page, tap "Make key pair", and copy the private key straight into the GitHub secret `AGENT_ENC_PRIVATE_KEY`. Put the public key in the web service environment as `AGENT_ENC_PUBLIC_KEY`. The page makes no network calls; the pair is identical to `npm run keygen`.
 3. **Fund and register the agent**: send a small amount of CELO to the agent wallet, then run Actions → "Register ERC-8004 agent". The run fails clearly if the wallet has no CELO or is already registered, and its summary shows the agent ID, transaction hash, and `verifyTx` result.
