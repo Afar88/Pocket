@@ -579,7 +579,7 @@ export default function PocketApp() {
           data: encodeFunctionData({
             abi: POCKET_REGISTRY_ABI,
             functionName: "approveAgent",
-            args: [p.id, ZERO, zeroHash, 0n, 0n, 0n, 0n, "0x" as Hex, ""]
+            args: [p.id, ZERO, zeroHash, 0n, 0n, 0n, "0x" as Hex, ""]
           }),
           value: 0n
         }));
