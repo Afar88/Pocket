@@ -630,6 +630,14 @@ export default function PocketApp() {
   }, [tab, getTextileRate]);
 
   const beginProgress = (title: string, labels: string[]) => setProgress({ title, steps: labels.map((label, index) => ({ label, state: index === 0 ? "active" : "pending" })) });
+  const startActionProgress = async (title: string, steps: string[]) => {
+    beginProgress(title, ["Preparing…", ...steps]);
+    // Let React paint the sheet before validation, public reads or passkey work.
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
+    });
+  };
+
   const advanceProgress = (index: number) => setProgress((current) => current ? ({ ...current, steps: current.steps.map((step, i) => ({ ...step, state: i < index ? "done" : i === index ? "active" : "pending" })) }) : current);
   const finishProgress = () => {
     setProgress((current) => current ? { ...current, steps: current.steps.map((step) => ({ ...step, state: "done" })) } : current);
@@ -919,6 +927,9 @@ export default function PocketApp() {
   async function createPocket() {
     setBusy(true); setError(""); setMessage("");
     try {
+      await startActionProgress("Create pocket", [
+        "Opening passkey…", "Saving pocket to Celo", "Confirming pocket receipt", "Attaching agent access"
+      ]);
       const { registry } = requireWriteSetup();
       if (!isAddress(recipient)) throw new Error("Enter a valid Celo recipient wallet address.");
       if (!label.trim()) throw new Error("Add a name for this pocket.");
@@ -935,8 +946,7 @@ export default function PocketApp() {
       if (amountRaw > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("Keep each pocket at or below " + MAX_USDT_DAILY_CAP + " USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const attachSession = keyCovers(payoutToken, payoutCapRaw);
-      beginProgress("Create pocket", ["Saving pocket to Celo", "Confirming pocket receipt", ...(attachSession ? ["Attaching session to pocket"] : [])]);
-      const createHash = await sendOwnerCalls([{
+      const createCall = {
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -944,8 +954,13 @@ export default function PocketApp() {
           args: [recipient as Address, amountRaw, payoutToken, payoutCapRaw, BigInt(period), due, label.trim(), receiverNote.trim(), floorRaw]
         }),
         value: 0n
-      }]);
+      };
+
+      // All form validation and call encoding is complete before the Altana
+      // passkey reconnect starts.
       advanceProgress(1);
+      const createHash = await sendOwnerCalls([createCall]);
+      advanceProgress(3);
 
       // pocketCount+1 is racy across owners; read the real id from the
       // PocketCreated event in the confirmed transaction's logs.
@@ -961,12 +976,10 @@ export default function PocketApp() {
       }
       if (createdId === null) throw new Error("Pocket created, but its PocketCreated event was not found in the receipt.");
 
-      // Legacy saved sessions predate sealed-key storage and cannot be
-      // attached to a new pocket; only sessions carrying the encrypted
-      // key and serialized session are.
+      // Legacy sessions without sealed-key storage cannot be attached to new pockets.
       if (attachSession && sessionMeta) {
-        advanceProgress(2);
-        await sendOwnerCalls([{
+        advanceProgress(4);
+        const approvalCall = {
           to: registry,
           data: encodeFunctionData({
             abi: POCKET_REGISTRY_ABI,
@@ -983,7 +996,8 @@ export default function PocketApp() {
             ]
           }),
           value: 0n
-        }]);
+        };
+        await sendOwnerCalls([approvalCall]);
       }
       setRecipient(""); setAmount(""); setPayoutCap(""); setLabel("Weekly support"); setReceiverNote(""); setMinRate(""); setTab("pockets");
       if (!attachSession && sessionMeta) setMessage("Pocket saved. Your agent key doesn't cover it. Grant a new key to include it.");
@@ -994,7 +1008,6 @@ export default function PocketApp() {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   function beginEdit(p: PocketView) {
     setEditingId(p.id.toString());
     setEditRecipient(p.recipient);
@@ -1012,6 +1025,7 @@ export default function PocketApp() {
   async function saveEdit(id: bigint) {
     setBusy(true); setError("");
     try {
+      await startActionProgress("Edit pocket", ["Opening passkey…", "Saving changes to Celo", "Updating rate floor"]);
       const { registry } = requireWriteSetup();
       if (!isAddress(editRecipient)) throw new Error("Enter a valid recipient address.");
       if (!editLabel.trim()) throw new Error("Add a name for this pocket.");
@@ -1023,7 +1037,7 @@ export default function PocketApp() {
       if (amountRaw <= 0n || amountRaw > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("Keep each pocket between 0 and " + MAX_USDT_DAILY_CAP + " USDT.");
       if (payoutCapRaw <= 0n) throw new Error("Set a positive daily payout cap.");
       const due = dueFromInput(editDue, "next due time");
-      await sendOwnerCalls([{
+      const updateCall = {
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -1031,56 +1045,93 @@ export default function PocketApp() {
           args: [id, editRecipient as Address, amountRaw, editPayoutToken, payoutCapRaw, BigInt(editPeriod), due, editLabel.trim(), editNote.trim()]
         }),
         value: 0n
-      }]);
-      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [id, parseUnits(editMinRate || "0", 18)] }), value: 0n }]);
+      };
+      const floorCall = {
+        to: registry,
+        data: encodeFunctionData({
+          abi: POCKET_REGISTRY_ABI,
+          functionName: "setMinRate",
+          args: [id, parseUnits(editMinRate || "0", 18)]
+        }),
+        value: 0n
+      };
+      advanceProgress(1);
+      await sendOwnerCalls([updateCall]);
+      advanceProgress(2);
+      await sendOwnerCalls([floorCall]);
       setEditingId(null);
       await refresh();
+      finishProgress();
     } catch (reason) {
+      stopProgress();
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   async function lowerFloor(p: PocketView) {
     setBusy(true); setError("");
     try {
+      await startActionProgress("Lower rate floor", ["Opening passkey…", "Saving rate floor"]);
       const { registry } = requireWriteSetup();
-      await sendOwnerCalls([{ to: registry, data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "setMinRate", args: [p.id, p.minOutPerUsdt * 98n / 100n] }), value: 0n }]);
+      const call = {
+        to: registry,
+        data: encodeFunctionData({
+          abi: POCKET_REGISTRY_ABI,
+          functionName: "setMinRate",
+          args: [p.id, p.minOutPerUsdt * 98n / 100n]
+        }),
+        value: 0n
+      };
+      advanceProgress(1);
+      await sendOwnerCalls([call]);
       await refresh();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setBusy(false); }
+      finishProgress();
+    } catch (reason) {
+      stopProgress();
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setBusy(false); }
   }
-
   async function setPaused(p: PocketView, paused: boolean) {
     setBusy(true); setError("");
     try {
+      await startActionProgress(paused ? "Pause pocket" : "Resume pocket", ["Opening passkey…", "Saving pocket state"]);
       const { registry } = requireWriteSetup();
-      await sendOwnerCalls([{
+      const call = {
         to: registry,
         data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "pausePocket", args: [p.id, paused] }),
         value: 0n
-      }]);
+      };
+      advanceProgress(1);
+      await sendOwnerCalls([call]);
       await refresh();
+      finishProgress();
     } catch (reason) {
+      stopProgress();
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   async function deletePocket(p: PocketView) {
-    if (!window.confirm("Delete this pocket rule? It cannot be restored.")) return;
     setBusy(true); setError("");
     try {
+      await startActionProgress("Delete pocket", ["Confirm delete", "Opening passkey…", "Deleting pocket"]);
+      if (!window.confirm("Delete this pocket rule? It cannot be restored.")) {
+        setProgress(null);
+        return;
+      }
       const { registry } = requireWriteSetup();
-      await sendOwnerCalls([{
+      const call = {
         to: registry,
         data: encodeFunctionData({ abi: POCKET_REGISTRY_ABI, functionName: "deletePocket", args: [p.id] }),
         value: 0n
-      }]);
+      };
+      advanceProgress(2);
+      await sendOwnerCalls([call]);
       await refresh();
+      finishProgress();
     } catch (reason) {
+      stopProgress();
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   // True when the saved agent key can pay a pocket in this currency with
   // this daily payout cap. The key's own per-currency cap is the limit; the
   // USDT cap bounds total spend across pockets.
@@ -1095,10 +1146,10 @@ export default function PocketApp() {
   async function giveAgentAccess(p: PocketView) {
     setBusy(true); setError("");
     try {
+      await startActionProgress("Give agent access", ["Opening passkey…", "Adding pocket to agent key"]);
       const { activeWallet, registry } = requireWriteSetup();
       if (!sessionMeta || !keyCovers(p.payoutToken, p.payoutDailyCap)) throw new Error("Your agent key doesn't cover this pocket. Grant a new key.");
-      beginProgress("Give agent access", ["Adding pocket to agent key"]);
-      await sendOwnerCalls([{
+      const call = {
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -1115,7 +1166,9 @@ export default function PocketApp() {
           ]
         }),
         value: 0n
-      }]);
+      };
+      advanceProgress(1);
+      await sendOwnerCalls([call]);
       setMessage("Agent can now pay this pocket.");
       await refresh();
       finishProgress();
@@ -1124,7 +1177,6 @@ export default function PocketApp() {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   async function grantSession() {
     setBusy(true); setError("");
     try {
