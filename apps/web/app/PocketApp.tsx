@@ -125,14 +125,14 @@ function sortPaymentRows(rows: PaymentRow[]): PaymentRow[] {
 // signatures, then decode with the same ABI used by the on-chain RPC reader.
 async function loadBlockscoutEventRows(
   registryAddress: Address,
-  topic: Hex,
+  eventAbi: typeof POCKET_PAID_EVENT | typeof POCKET_SKIPPED_EVENT,
   ownIds: Set<string>
 ): Promise<PaymentRow[]> {
   const rows: PaymentRow[] = [];
   let cursor: Record<string, string | number | null> | null = null;
   let previousCursor = "";
   for (;;) {
-    const params = new URLSearchParams({ topic });
+    const params = new URLSearchParams({ topic: toEventSelector(eventAbi) });
     for (const [key, value] of Object.entries(cursor ?? {})) {
       if (value !== null && value !== undefined) params.set(key, String(value));
     }
@@ -149,7 +149,7 @@ async function loadBlockscoutEventRows(
         throw new Error("Blockscout returned an incomplete log");
       }
       const decoded = decodeEventLog({
-        abi: POCKET_REGISTRY_ABI,
+        abi: [eventAbi],
         data: log.data as Hex,
         topics: log.topics as [Hex, ...Hex[]]
       });
@@ -193,8 +193,8 @@ async function loadBlockscoutPocketPayments(
   ownIds: Set<string>
 ): Promise<PaymentRow[]> {
   const [paid, skipped] = await Promise.all([
-    loadBlockscoutEventRows(registryAddress, toEventSelector(POCKET_PAID_EVENT), ownIds),
-    loadBlockscoutEventRows(registryAddress, toEventSelector(POCKET_SKIPPED_EVENT), ownIds)
+    loadBlockscoutEventRows(registryAddress, POCKET_PAID_EVENT, ownIds),
+    loadBlockscoutEventRows(registryAddress, POCKET_SKIPPED_EVENT, ownIds)
   ]);
   return sortPaymentRows([...paid, ...skipped]);
 }
