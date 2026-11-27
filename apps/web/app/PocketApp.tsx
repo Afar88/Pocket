@@ -286,10 +286,13 @@ const POCKET_EVENTS_ABI = [POCKET_CREATED_EVENT] as const;
 function shortAddress(value: string): string { return value.length > 12 ? value.slice(0, 6) + "…" + value.slice(-4) : value; }
 // Rebuild the agent key's public details from the newest live pocket
 // approval. Returns null when no pocket carries a live key.
-function sessionFromPockets(pockets: readonly PocketView[]): SessionMeta | null {
+function sessionFromPockets(
+  pockets: readonly PocketView[],
+  revokedKeyIds: ReadonlySet<string> = new Set<string>()
+): SessionMeta | null {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const live = pockets
-    .filter((p) => !p.deleted && !p.closed && p.agent !== "0x0000000000000000000000000000000000000000" && p.sessionExpiry > now && p.encryptedSessionKey && p.encryptedSessionKey !== "0x" && p.serializedSession)
+    .filter((p) => !revokedKeyIds.has(p.sessionKeyId.toLowerCase()) && !p.deleted && !p.closed && p.agent !== "0x0000000000000000000000000000000000000000" && p.sessionExpiry > now && p.encryptedSessionKey && p.encryptedSessionKey !== "0x" && p.serializedSession)
     .sort((a, b) => (a.sessionExpiry > b.sessionExpiry ? -1 : a.sessionExpiry < b.sessionExpiry ? 1 : 0));
   for (const p of live) {
     try {
@@ -381,6 +384,32 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 
 const sessionStorageKey = (walletAddress: string) =>
   "pocket-session-" + walletAddress.toLowerCase();
+const revokedSessionKeysStorageKey = (walletAddress: string) =>
+  "pocket-revoked-session-keys-" + walletAddress.toLowerCase();
+
+function readRevokedSessionKeyIds(walletAddress: string): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(revokedSessionKeysStorageKey(walletAddress));
+    const ids = raw ? JSON.parse(raw) as unknown : [];
+    return new Set(
+      Array.isArray(ids)
+        ? ids.filter((id): id is string => typeof id === "string").map((id) => id.toLowerCase())
+        : []
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function markSessionKeyRevoked(walletAddress: string, keyId: string) {
+  try {
+    const revoked = readRevokedSessionKeyIds(walletAddress);
+    revoked.add(keyId.toLowerCase());
+    window.localStorage.setItem(revokedSessionKeysStorageKey(walletAddress), JSON.stringify([...revoked]));
+  } catch {
+    // The Altana revoke is already confirmed; local bookkeeping must not undo that result.
+  }
+}
 const PERIODS = [
   { label: "Once", value: "0" },
   { label: "Weekly", value: "604800" },
@@ -763,7 +792,7 @@ export default function PocketApp() {
       setPockets([...own].reverse());
 
       // Rebuild the public session details from the on-chain pocket records.
-      const fromChain = sessionFromPockets(own);
+      const fromChain = sessionFromPockets(own, readRevokedSessionKeyIds(wallet.address));
       if (fromChain) {
         setSessionMeta((current) => {
           if (current && current.keyId.toLowerCase() === fromChain.keyId.toLowerCase()) return current;
@@ -1148,19 +1177,26 @@ export default function PocketApp() {
     try {
       await startActionProgress("Give agent access", ["Opening passkey…", "Adding pocket to agent key"]);
       const { activeWallet, registry } = requireWriteSetup();
-      if (!sessionMeta || !keyCovers(p.payoutToken, p.payoutDailyCap)) throw new Error("Your agent key doesn't cover this pocket. Grant a new key.");
+      const ownPockets = await listOwnPockets();
+      const activePocket = ownPockets.find((candidate) =>
+        candidate.id === p.id && !candidate.deleted && !candidate.closed
+      );
+      if (!activePocket) throw new Error("Pocket unavailable.");
+      if (!sessionMeta || !keyCovers(activePocket.payoutToken, activePocket.payoutDailyCap)) {
+        throw new Error("Your agent key doesn't cover this pocket. Grant a new key.");
+      }
       const call = {
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
           functionName: "approveAgent",
           args: [
-            p.id,
+            activePocket.id,
             activeWallet.address as Address,
             sessionMeta.keyId,
             BigInt(sessionMeta.expiry - SESSION_SKIP_GRACE_SECONDS),
             BigInt(sessionMeta.usdtDailyCap),
-            p.payoutDailyCap,
+            activePocket.payoutDailyCap,
             sessionMeta.encryptedSessionKey,
             sessionMeta.serializedSession
           ]
@@ -1327,7 +1363,7 @@ export default function PocketApp() {
       // reconnecting the signer, so the passkey prompt is not delayed by RPC.
       const ownPockets = await listOwnPockets();
       const calls = ownPockets
-        .filter((p) => !p.deleted && p.sessionKeyId.toLowerCase() === sessionMeta.keyId.toLowerCase())
+        .filter((p) => !p.deleted && !p.closed && p.sessionKeyId.toLowerCase() === sessionMeta.keyId.toLowerCase())
         .map((p) => ({
           to: registry,
           data: encodeFunctionData({
@@ -1349,11 +1385,26 @@ export default function PocketApp() {
         throw new Error("Altana did not confirm revocation. Check the returned session status before continuing.");
       }
       advanceProgress(2);
-      if (calls.length) await sendOwnerCalls(calls);
+      let pocketsCleared = true;
+      if (calls.length) {
+        try {
+          await sendOwnerCalls(calls);
+        } catch {
+          // Altana has revoked the session already. A registry cleanup failure
+          // must not leave the local key active or hide the successful revoke.
+          pocketsCleared = false;
+        }
+      }
       window.localStorage.removeItem(sessionStorageKey(activeWallet.address));
+      markSessionKeyRevoked(activeWallet.address, sessionMeta.keyId);
       setSessionMeta(null);
-      setMessage("Session revoked. The agent can no longer use this key.");
+      setMessage(pocketsCleared
+        ? "Session revoked. The agent can no longer use this key."
+        : "Key revoked. Some pockets could not be cleared.");
       await refresh();
+      // Refresh can run after the Altana revoke; never restore this key locally.
+      setSessionMeta(null);
+      window.localStorage.removeItem(sessionStorageKey(activeWallet.address));
       finishProgress();
     } catch (reason) {
       stopProgress();

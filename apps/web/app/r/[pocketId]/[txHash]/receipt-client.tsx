@@ -126,9 +126,9 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
         let tagFound: boolean | null = null;
         if (config.attributionTag) {
           try {
-            // Altana relays wrap each call, so the tag sits inside the input,
-            // where verifyTx (outer suffix or EntryPoint only) can't see it.
-            // Try verifyTx first, then Altana's own reader on the same input.
+            // SDK 0.7.0 verifies the executed Altana intent and returns the
+            // signing wallet as sender, rather than the relayer's outer tx.from.
+            // Keep Altana's parser as a compatibility fallback for other inputs.
             const tags = await verifyTx({
               client: client as unknown as Parameters<typeof verifyTx>[0]["client"],
               hash

@@ -145,7 +145,8 @@ async function main() {
         client: publicClient as unknown as Parameters<typeof verifyTx>[0]["client"],
         hash
       });
-      // Altana's relay wraps the tagged call, so verifyTx can miss it; read the input with Altana's parser too.
+      // SDK 0.7.0 verifies the executed Altana intent and returns its authorising
+      // wallet as sender. Keep Altana's input parser as a compatibility fallback.
       let codes = result?.codes ?? [];
       if (!codes.includes(config.attributionTag)) {
         const tx = await publicClient.getTransaction({ hash });
