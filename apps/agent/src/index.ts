@@ -7,6 +7,7 @@ import {
 } from "viem";
 import { celo } from "viem/chains";
 import { verifyTx } from "@celo/attribution-tags";
+import { parseAttribution } from "@altananetwork/sdk";
 import {
   CELOSCAN_TX,
   CELO_USDT,
@@ -144,11 +145,17 @@ async function main() {
         client: publicClient as unknown as Parameters<typeof verifyTx>[0]["client"],
         hash
       });
-      const present = Boolean(result?.codes.includes(config.attributionTag));
+      // Altana's relay wraps the tagged call, so verifyTx can miss it; read the input with Altana's parser too.
+      let codes = result?.codes ?? [];
+      if (!codes.includes(config.attributionTag)) {
+        const tx = await publicClient.getTransaction({ hash });
+        codes = parseAttribution(tx.input)?.codes ?? [];
+      }
+      const present = codes.includes(config.attributionTag);
       consoleLogger.info("verifyTx: first live transaction attribution result", {
         transaction: CELOSCAN_TX + hash,
         expectedTag: config.attributionTag,
-        returnedCodes: result?.codes ?? [],
+        returnedCodes: codes,
         tagPresent: present,
         result
       });
