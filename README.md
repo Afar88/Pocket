@@ -10,6 +10,29 @@ Pocket lets a sender pay a receiver in the receiver's local stablecoin using USD
 - **Rate guard.** A floor of zero disables the guard. Otherwise the registry independently checks the quoted output rate before it accepts a payment mark. A floor can be changed with `setMinRate` without changing other pocket settings.
 - **Public evidence.** PocketPaid stores the last payment details and emits the output token, USDT spent, output amount, tx reference, timestamp, and next due time. PocketSkipped publishes a reason code. The app reads both event streams and each receiver receipt re-checks the Celo transaction when opened.
 
+## Tags and the Altana relay
+
+Pocket pays from the user's Altana smart wallet. Altana's relayer submits each on-chain transaction and pays the gas; the signer and authoriser is the user's own Altana wallet. The relayer is the outer transaction sender, not the account authorising the payment.
+
+Every Pocket transaction carries the ERC-8021 attribution code `celo_35b1e46e453d` together with Altana's `altana` code. Agent payments also carry `pocket_agent_10132`, identifying Pocket's ERC-8004 agent.
+
+With `@celo/attribution-tags` 0.7.0, `verifyTx` verifies the executed Altana relay intent and returns its codes plus the signing wallet as `sender`.
+
+Example:
+
+```ts
+const result = await verifyTx({
+  client,
+  hash: "0x0019bcdbb6169ec3e32f7e7cca60cd18cccb745cbe98cfc20000921a5f22695d"
+});
+
+// {
+//   codes: ["altana", "celo_35b1e46e453d"],
+//   schemaId: 0,
+//   sender: "0x3308329dc148d7ba1c49caff58fdf81dbdfcd048"
+// }
+```
+
 ## Supported Celo currencies
 
 All addresses and decimals below are copied from [Textile's official Celo address book](https://docs.textilecredit.com/protocol/address-book.html) (chain ID 42220).
