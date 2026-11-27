@@ -10,7 +10,8 @@ import {
   ALTANA_KEYSTORE,
   CELO_CHAIN_ID,
   ALTANA_KEYSTORE_ABI,
-  openSealed
+  openSealed,
+  POCKET_AGENT_ID
 } from "@pocket/core";
 import {
   getAddress,
@@ -23,11 +24,16 @@ import type { PocketRecord, ExecuteResult } from "./types.js";
 
 export type AgentSession = Session;
 
+/** Onchain code for Pocket's ERC-8004 agent identity, sent after the app tag. */
+export const POCKET_AGENT_CODE = "pocket_agent_" + POCKET_AGENT_ID.toString();
+
 export function createAltana(config: AgentConfig) {
   // Pass through the exact ATTRIBUTION_TAG value used by the worker. Never
   // construct an Altana client capable of sending untagged transactions.
   assertAttributionTag(config.attributionTag);
-  const client = createClient({ chains: [CELO], appCode: config.attributionTag });
+  // Second code names Pocket's ERC-8004 agent (#10132) on every payment, so the
+  // agent ID can be read back from the transaction itself.
+  const client = createClient({ chains: [CELO], appCode: [config.attributionTag, POCKET_AGENT_CODE] });
   return { client };
 }
 

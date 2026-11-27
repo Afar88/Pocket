@@ -12,6 +12,7 @@ import {
 } from "viem";
 import { celo } from "viem/chains";
 import { verifyTx } from "@celo/attribution-tags";
+import { parseAttribution } from "@altananetwork/sdk";
 import {
   CELO_CHAIN_ID,
   CELO_RPC_DEFAULT,
@@ -125,11 +126,19 @@ export default function PocketReceipt({ pocketId, txHash }: { pocketId: string; 
         let tagFound: boolean | null = null;
         if (config.attributionTag) {
           try {
+            // Altana relays wrap each call, so the tag sits inside the input,
+            // where verifyTx (outer suffix or EntryPoint only) can't see it.
+            // Try verifyTx first, then Altana's own reader on the same input.
             const tags = await verifyTx({
               client: client as unknown as Parameters<typeof verifyTx>[0]["client"],
               hash
             });
-            tagFound = Boolean(tags?.codes.includes(config.attributionTag));
+            let codes = tags?.codes ?? [];
+            if (!codes.includes(config.attributionTag)) {
+              const tx = await client.getTransaction({ hash });
+              codes = parseAttribution(tx.input)?.codes ?? [];
+            }
+            tagFound = codes.includes(config.attributionTag);
           } catch { tagFound = null; }
         }
 
