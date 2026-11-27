@@ -1180,28 +1180,43 @@ export default function PocketApp() {
   async function grantSession() {
     setBusy(true); setError("");
     try {
-      const { client, activeWallet, registry } = await ensureWriteWallet();
+      await startActionProgress("Grant session key", [
+        "Opening passkey…", "Granting session key", "Approving Textile checks", "Saving key to Celo"
+      ]);
+      // All public reads and input checks run before opening the passkey flow.
+      const { registry } = requireWriteSetup();
       const ownPockets = await listOwnPockets();
       if (!ownPockets.some((p) => !p.deleted && !p.closed)) throw new Error("Create at least one active pocket before granting the agent.");
-      const secret = generatePrivateKey();
-      const sessionSigner = signerFromPrivateKey(secret);
       const expiry = Math.floor(Date.now() / 1000) + Number(expiryDays) * 86_400;
       const registryPaymentCutoff = expiry - SESSION_SKIP_GRACE_SECONDS;
       if (registryPaymentCutoff <= Math.floor(Date.now() / 1000)) throw new Error("Choose a session expiry more than one hour from now.");
       const usdtLimit = parseUnits(usdtCap, usdtDecimals);
       if (usdtLimit <= 0n || usdtLimit > parseUnits(MAX_USDT_DAILY_CAP, usdtDecimals)) throw new Error("The USDT daily cap must be above zero and no more than " + MAX_USDT_DAILY_CAP + ".");
+
       const activePockets = ownPockets.filter((p) => !p.deleted && !p.closed);
       const existingCaps: Record<string, bigint> = {};
       for (const p of activePockets) {
         const key = p.payoutToken.toLowerCase();
         existingCaps[key] = (existingCaps[key] ?? 0n) + p.payoutDailyCap;
       }
-      // Cover every Pocket currency, not only today's pockets, so pockets
-      // added later can use this key with no new grant (and no new Altana
-      // fee). The USDT cap bounds real spend; each currency's cap is set to
-      // twice the USDT cap at the current Textile rate, so it never binds
-      // first unless the rate doubles. A currency with no rate and no
-      // pocket is left out and needs a new key.
+
+      // Use warm cache entries and fetch only missing currencies. All required
+      // rate requests run together; each request is bounded to four seconds.
+      const currenciesToPrice = POCKET_CURRENCIES.filter((currency) =>
+        !currency.isUsdt && !(currency.payable === false && !existingCaps[currency.address.toLowerCase()])
+      );
+      const rateEntries = await Promise.all(currenciesToPrice.map(async (currency) => {
+        const key = currency.address.toLowerCase();
+        try {
+          return [key, await getTextileRate(currency)] as const;
+        } catch {
+          // No quote or timeout: keep the existing pocket cap for this token.
+          return [key, null] as const;
+        }
+      }));
+      const ratesByToken = new Map(rateEntries);
+
+      // Keep the existing permissions and cap calculation unchanged.
       const payoutDailyCaps: Record<string, bigint> = {};
       const payoutTokens: Address[] = [];
       for (const currency of POCKET_CURRENCIES) {
@@ -1212,20 +1227,26 @@ export default function PocketApp() {
         if (currency.isUsdt) {
           ceiling = usdtLimit;
         } else {
-          try {
-            const response = await fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" });
-            if (response.ok) {
-              const { bid } = await response.json() as { bid: string };
-              const perUsdt = parseUnits(Number(bid).toFixed(currency.decimals), currency.decimals);
-              ceiling = (perUsdt * usdtLimit * 2n) / 10n ** BigInt(usdtDecimals);
-            }
-          } catch { /* no rate: fall back to existing pockets only */ }
+          const rate = ratesByToken.get(key);
+          if (rate) {
+            const perUsdt = parseUnits(Number(rate.bid).toFixed(currency.decimals), currency.decimals);
+            ceiling = (perUsdt * usdtLimit * 2n) / 10n ** BigInt(usdtDecimals);
+          }
         }
         const cap = existing > ceiling ? existing : ceiling;
         if (cap > 0n) { payoutTokens.push(currency.address); payoutDailyCaps[key] = cap; }
       }
       const permissions = buildPocketSessionPolicy({ registryAddress: registry, usdtDailyCap: usdtLimit, payoutTokens, payoutDailyCaps });
-      beginProgress("Grant session key", ["Granting session key", "Approving Textile signature checks", "Saving session limits to Celo"]);
+      if (!config?.agentEncPublicKey) {
+        throw new Error("AGENT_ENC_PUBLIC_KEY is not set on the web service; the agent cannot receive session keys.");
+      }
+      const secret = generatePrivateKey();
+      const sessionSigner = signerFromPrivateKey(secret);
+
+      // The reconnect may show the passkey prompt. Nothing slow sits between
+      // this step and the Altana grant call.
+      advanceProgress(1);
+      const { client, activeWallet } = await ensureWriteWallet();
       const session = await client.grantSession({
         wallet: activeWallet,
         signer: activeWallet.signer,
@@ -1234,9 +1255,8 @@ export default function PocketApp() {
         expiry,
         chainId: CELO_CHAIN_ID
       });
-      if (!config?.agentEncPublicKey) {
-        throw new Error("AGENT_ENC_PUBLIC_KEY is not set on the web service; the agent cannot receive session keys.");
-      }
+      advanceProgress(2);
+
       // The session private key stays out of the browser: it is sealed to the
       // agent's X25519 public key and only the ciphertext goes onchain.
       const encryptedSessionKey = sealToAgent(config.agentEncPublicKey as Hex, secret);
@@ -1264,7 +1284,6 @@ export default function PocketApp() {
         throw new Error("Altana did not fully confirm the session grant. Revoke the session and grant again. " + failedLegs.join("; "));
       }
 
-      advanceProgress(1);
       // The Textile reactor must be approved to call the wallet's ERC-1271
       // isValidSignature for this session key during settlement verification.
       if (payoutTokens.some((token) => token.toLowerCase() !== CELO_USDT.toLowerCase())) {
@@ -1272,8 +1291,7 @@ export default function PocketApp() {
         if (checkerApproval.status !== "CONFIRMED") throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
       }
 
-      advanceProgress(2);
-      const calls = ownPockets.filter((p) => !p.deleted && !p.closed).map((p) => ({
+      const calls = activePockets.map((p) => ({
         to: registry,
         data: encodeFunctionData({
           abi: POCKET_REGISTRY_ABI,
@@ -1282,6 +1300,7 @@ export default function PocketApp() {
         }),
         value: 0n
       }));
+      advanceProgress(3);
       if (calls.length) await sendOwnerCalls(calls);
 
       setMessage("Session granted. The agent can pay your pockets until the key expires or you revoke it.");
@@ -1296,18 +1315,14 @@ export default function PocketApp() {
   async function revokeSession() {
     setBusy(true); setError("");
     try {
-      const { client, activeWallet, registry } = await ensureWriteWallet();
+      await startActionProgress("Revoke session key", [
+        "Opening passkey…", "Revoking session key", "Clearing pocket access"
+      ]);
+      const { registry } = requireWriteSetup();
       if (!sessionMeta) throw new Error("No saved session key is available in this browser.");
-      beginProgress("Revoke session key", ["Revoking session key", "Clearing pocket access"]);
-      const revoked = await client.revokeSession({
-        wallet: activeWallet,
-        signer: activeWallet.signer,
-        session: sessionMeta.publicKey
-      });
-      if (revoked.status !== "revoked") {
-        throw new Error("Altana did not confirm revocation. Check the returned session status before continuing.");
-      }
-      advanceProgress(1);
+
+      // Read the complete pocket list and prepare the clear-access calls before
+      // reconnecting the signer, so the passkey prompt is not delayed by RPC.
       const ownPockets = await listOwnPockets();
       const calls = ownPockets
         .filter((p) => !p.deleted && p.sessionKeyId.toLowerCase() === sessionMeta.keyId.toLowerCase())
@@ -1320,6 +1335,18 @@ export default function PocketApp() {
           }),
           value: 0n
         }));
+
+      advanceProgress(1);
+      const { client, activeWallet } = await ensureWriteWallet();
+      const revoked = await client.revokeSession({
+        wallet: activeWallet,
+        signer: activeWallet.signer,
+        session: sessionMeta.publicKey
+      });
+      if (revoked.status !== "revoked") {
+        throw new Error("Altana did not confirm revocation. Check the returned session status before continuing.");
+      }
+      advanceProgress(2);
       if (calls.length) await sendOwnerCalls(calls);
       window.localStorage.removeItem(sessionStorageKey(activeWallet.address));
       setSessionMeta(null);
@@ -1331,7 +1358,6 @@ export default function PocketApp() {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
-
   const dateText = (timestamp: bigint) => new Date(Number(timestamp) * 1000).toLocaleString();
   const periodText = (seconds: bigint) => seconds === 0n ? "Once" : seconds === 604_800n ? "Weekly" : seconds === 2_592_000n ? "Monthly" : "Every " + (Number(seconds) / 86_400) + " days";
   const pocketStatus = (p: PocketView) => p.closed ? "Completed" : p.paused ? "Paused" : p.sessionExpiry > 0n && p.sessionExpiry <= BigInt(Math.floor(Date.now() / 1000)) ? "Session expired" : p.agent === ZERO ? "Session not granted" : "Active";
