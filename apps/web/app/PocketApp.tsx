@@ -99,6 +99,7 @@ type PaymentRow = {
   transactionIndex: number; logIndex: number;
   payoutToken?: Address; usdtSpent?: bigint; amountOut?: bigint; timestamp?: bigint; reasonCode?: number;
 };
+type PocketPaymentEventAbi = Extract<(typeof POCKET_REGISTRY_ABI)[number], { type: "event" }>;
 type BlockscoutAddressLog = {
   transaction_hash: string;
   block_number: string | number;
@@ -125,7 +126,7 @@ function sortPaymentRows(rows: PaymentRow[]): PaymentRow[] {
 // signatures, then decode with the same ABI used by the on-chain RPC reader.
 async function loadBlockscoutEventRows(
   registryAddress: Address,
-  eventAbi: typeof POCKET_PAID_EVENT | typeof POCKET_SKIPPED_EVENT,
+  eventAbi: PocketPaymentEventAbi,
   ownIds: Set<string>
 ): Promise<PaymentRow[]> {
   const rows: PaymentRow[] = [];
@@ -193,8 +194,8 @@ async function loadBlockscoutPocketPayments(
   ownIds: Set<string>
 ): Promise<PaymentRow[]> {
   const [paid, skipped] = await Promise.all([
-    loadBlockscoutEventRows(registryAddress, POCKET_PAID_EVENT, ownIds),
-    loadBlockscoutEventRows(registryAddress, POCKET_SKIPPED_EVENT, ownIds)
+    loadBlockscoutEventRows(registryAddress, POCKET_PAID_EVENT as PocketPaymentEventAbi, ownIds),
+    loadBlockscoutEventRows(registryAddress, POCKET_SKIPPED_EVENT as PocketPaymentEventAbi, ownIds)
   ]);
   return sortPaymentRows([...paid, ...skipped]);
 }
