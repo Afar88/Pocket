@@ -1247,6 +1247,7 @@ export default function PocketApp() {
       // this step and the Altana grant call.
       advanceProgress(1);
       const { client, activeWallet } = await ensureWriteWallet();
+      advanceProgress(2);
       const session = await client.grantSession({
         wallet: activeWallet,
         signer: activeWallet.signer,
@@ -1255,7 +1256,7 @@ export default function PocketApp() {
         expiry,
         chainId: CELO_CHAIN_ID
       });
-      advanceProgress(2);
+      advanceProgress(3);
 
       // The session private key stays out of the browser: it is sealed to the
       // agent's X25519 public key and only the ciphertext goes onchain.
@@ -1287,6 +1288,7 @@ export default function PocketApp() {
       // The Textile reactor must be approved to call the wallet's ERC-1271
       // isValidSignature for this session key during settlement verification.
       if (payoutTokens.some((token) => token.toLowerCase() !== CELO_USDT.toLowerCase())) {
+        advanceProgress(3);
         const checkerApproval = await client.approveSignatureChecker({ wallet: activeWallet, signer: activeWallet.signer, session, checker: TEXTILE_REACTOR, chainId: CELO_CHAIN_ID });
         if (checkerApproval.status !== "CONFIRMED") throw new Error("Textile reactor signature-checker approval did not confirm: " + checkerApproval.status);
       }
@@ -1300,7 +1302,7 @@ export default function PocketApp() {
         }),
         value: 0n
       }));
-      advanceProgress(3);
+      advanceProgress(4);
       if (calls.length) await sendOwnerCalls(calls);
 
       setMessage("Session granted. The agent can pay your pockets until the key expires or you revoke it.");
