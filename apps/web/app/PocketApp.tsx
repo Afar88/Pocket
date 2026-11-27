@@ -113,6 +113,10 @@ type BlockscoutLogPage = {
   next_page_params?: Record<string, string | number | null> | null;
 };
 type ActivityCache = { payments: PaymentRow[]; walletMoves: WalletMove[] };
+type TextileRate = { bid: string; source?: "bid" | "last" };
+type CachedTextileRate = { rate: TextileRate; cachedAt: number };
+const RATE_CACHE_TTL_MS = 2 * 60_000;
+const RATE_FETCH_TIMEOUT_MS = 4_000;
 
 function sortPaymentRows(rows: PaymentRow[]): PaymentRow[] {
   return rows.sort((a, b) =>
@@ -467,6 +471,7 @@ export default function PocketApp() {
   const [error, setError] = useState("");
   const [historyUpdating, setHistoryUpdating] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const rateCacheRef = useRef<Map<string, CachedTextileRate>>(new Map());
 
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
@@ -553,6 +558,35 @@ export default function PocketApp() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
 
+  const fetchTextileRate = useCallback(async (currency: (typeof POCKET_CURRENCIES)[number]): Promise<TextileRate> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), RATE_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch("/api/rates?currency=" + encodeURIComponent(currency.code), {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error("No live Textile rate is available for " + currency.symbol + ".");
+      const rate = await response.json() as TextileRate;
+      if (!rate.bid || !Number.isFinite(Number(rate.bid)) || Number(rate.bid) <= 0) {
+        throw new Error("Textile returned an invalid rate for " + currency.symbol + ".");
+      }
+      parseUnits(rate.bid, 18);
+      rateCacheRef.current.set(currency.code, { rate, cachedAt: Date.now() });
+      return rate;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
+  const getTextileRate = useCallback(async (
+    currency: (typeof POCKET_CURRENCIES)[number]
+  ): Promise<TextileRate> => {
+    const cached = rateCacheRef.current.get(currency.code);
+    if (cached && Date.now() - cached.cachedAt < RATE_CACHE_TTL_MS) return cached.rate;
+    return fetchTextileRate(currency);
+  }, [fetchTextileRate]);
+
   useEffect(() => {
     const currency = POCKET_CURRENCIES.find((item) => item.address.toLowerCase() === payoutToken.toLowerCase());
     if (!currency || currency.isUsdt) {
@@ -564,22 +598,19 @@ export default function PocketApp() {
     let cancelled = false;
     setLiveRate(null);
     setRateSource(null);
-    // Read a fresh rate now and every minute while this currency is picked.
+    const applyRate = (rate: TextileRate, first: boolean) => {
+      if (cancelled) return;
+      const live = parseUnits(rate.bid, 18);
+      const floor = live * 98n / 100n;
+      setLiveRate(rate.bid);
+      setRateSource(rate.source ?? "bid");
+      if (first) setMinRate(formatUnits(floor, 18));
+    };
     const load = (first: boolean) => {
       if (first) setRateLoading(true);
-      fetch("/api/rates?currency=" + encodeURIComponent(currency.code), { cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("No live Textile rate is available for " + currency.symbol + ".");
-          return await response.json() as { bid: string; source?: "bid" | "last" };
-        })
-        .then(({ bid, source }) => {
-          if (cancelled) return;
-          const live = parseUnits(bid, 18);
-          const floor = live * 98n / 100n;
-          setLiveRate(bid);
-          setRateSource(source ?? "bid");
-          if (first) setMinRate(formatUnits(floor, 18));
-        })
+      // Reuse a fresh rate on entry; later form refreshes request a new quote.
+      (first ? getTextileRate(currency) : fetchTextileRate(currency))
+        .then((rate) => applyRate(rate, first))
         .catch(() => {
           if (!cancelled && first) { setLiveRate(null); setRateSource(null); setMinRate(""); }
         })
@@ -588,7 +619,15 @@ export default function PocketApp() {
     load(true);
     const timer = window.setInterval(() => load(false), 60_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [payoutToken]);
+  }, [payoutToken, getTextileRate, fetchTextileRate]);
+
+  useEffect(() => {
+    if (tab !== "key") return;
+    // Warm rate quotes while the user reviews the key settings. Failures are
+    // harmless: grantSession falls back to existing pocket caps.
+    const currencies = POCKET_CURRENCIES.filter((currency) => !currency.isUsdt);
+    void Promise.all(currencies.map((currency) => getTextileRate(currency).catch(() => null)));
+  }, [tab, getTextileRate]);
 
   const beginProgress = (title: string, labels: string[]) => setProgress({ title, steps: labels.map((label, index) => ({ label, state: index === 0 ? "active" : "pending" })) });
   const advanceProgress = (index: number) => setProgress((current) => current ? ({ ...current, steps: current.steps.map((step, i) => ({ ...step, state: i < index ? "done" : i === index ? "active" : "pending" })) }) : current);
